@@ -1,0 +1,12 @@
+# Godot imports and machine-local state
+.godot/
+.tools/
+Godot/
+override.cfg
+.DS_Store
+
+# Generated Web export and validation output
+build/
+artifacts/
+__pycache__/
+*.pyc

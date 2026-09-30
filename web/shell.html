@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f4df">
+  <link rel="icon" href="data:,">
+  <meta name="description" content="A smooth little snake with a big appetite. Turn, collect apples, and keep a little room to grow.">
+  <title>SmoothSnake</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    body { display: grid; place-items: center; background: #f8f4df; color: #354737; font: 16px system-ui, sans-serif; }
+    #frame { position: relative; width: min(100vw, 160vh); aspect-ratio: 8 / 5; }
+    #canvas { display: block; width: 100%; height: 100%; outline: none; }
+    #status { position: absolute; inset: 0; display: grid; place-content: center; gap: 18px; text-align: center; padding: 32px; background: #f8f4df; }
+    #status[hidden] { display: none; }
+    h1 { margin: 0; font-size: 34px; letter-spacing: -1px; }
+    p { margin: 0; max-width: 500px; line-height: 1.6; color: #78856c; white-space: pre-line; }
+    progress { width: min(280px, 65vw); height: 7px; border: 0; border-radius: 8px; overflow: hidden; margin: 0 auto; accent-color: #799953; }
+    progress::-webkit-progress-bar { background: #e6e8ce; }
+    progress::-webkit-progress-value { background: #799953; }
+    button { border: 0; border-radius: 10px; background: #577d46; color: #fffdf0; padding: 13px 24px; font: inherit; cursor: pointer; }
+    noscript { position: fixed; inset: 0; display: grid; place-content: center; padding: 30px; background: #f8f4df; }
+  </style>
+  $GODOT_HEAD_INCLUDE
+</head>
+<body>
+  <main id="frame">
+    <canvas id="canvas" tabindex="0" aria-label="SmoothSnake game. Left and right arrows to turn, Escape to pause, Enter to start.">Your browser needs canvas and WebGL 2 to play SmoothSnake.</canvas>
+    <div id="status" role="status" aria-live="polite">
+      <h1>SmoothSnake</h1>
+      <p id="message">Getting the apples ready…</p>
+      <progress id="progress" aria-label="Loading game"></progress>
+      <button id="retry" hidden>Try again</button>
+    </div>
+  </main>
+  <noscript>Enable JavaScript to play SmoothSnake.</noscript>
+  <script src="$GODOT_URL"></script>
+  <script>
+    const status = document.getElementById("status");
+    const message = document.getElementById("message");
+    const progress = document.getElementById("progress");
+    const retry = document.getElementById("retry");
+    const canvas = document.getElementById("canvas");
+    let failed = false;
+    retry.addEventListener("click", () => location.reload());
+    function showError(error) {
+      failed = true;
+      status.hidden = false;
+      progress.hidden = true;
+      retry.hidden = false;
+      message.textContent = "The game couldn't start.\n" + String(error?.message || error);
+      console.error(error);
+    }
+    window.addEventListener("keydown", (event) => {
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", "Escape"].includes(event.key)) {
+        event.preventDefault();
+      }
+    });
+    try {
+      const engine = new Engine($GODOT_CONFIG);
+      const missing = Engine.getMissingFeatures({ threads: false });
+      if (missing.length) {
+        showError("Please use a current desktop browser with WebGL 2. Missing: " + missing.join(", "));
+      } else {
+        engine.startGame({
+          canvas,
+          onPrintError: (...parts) => {
+            const text = parts.join(" ");
+            if (text.includes("SCRIPT ERROR:") || text.startsWith("ERROR:")) {
+              showError(text);
+            } else {
+              console.warn(text);
+            }
+          },
+          onProgress: (current, total) => {
+            if (total > 0) { progress.max = total; progress.value = current; }
+          },
+          onExit: (code) => showError("The game stopped (code " + code + "). Reload to play again."),
+        }).then(() => {
+          if (!failed) {
+            status.hidden = true;
+            canvas.focus();
+          }
+        }).catch(showError);
+      }
+    } catch (error) {
+      showError(error);
+    }
+  </script>
+</body>
+</html>

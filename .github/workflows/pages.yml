@@ -1,0 +1,67 @@
+name: Build and deploy Web game
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot 4.7.2
+        run: |
+          mkdir -p .tools
+          curl --fail --location --retry 3 \
+            https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip \
+            --output .tools/godot.zip
+          unzip -q .tools/godot.zip -d .tools
+          mv .tools/Godot_v4.7.2-stable_linux.x86_64 .tools/godot
+          chmod +x .tools/godot
+      - name: Cache Web templates
+        uses: actions/cache@v4
+        with:
+          path: .tools/templates
+          key: godot-web-4.7.2-v1
+      - name: Import project
+        run: .tools/godot --headless --path . --import
+      - name: Verify gameplay
+        run: .tools/godot --headless --path . --script tests/run.gd
+      - name: Export Web
+        run: python3 tools/web.py build
+      - name: Upload playable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoothsnake-web
+          path: build/web
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
