@@ -91,25 +91,49 @@ const path = require("node:path");
     assert.deepEqual(layout.canvas, { width: 960, height: 600 });
     await page.setViewportSize({ width: 1727, height: 831 });
     const wideLayout = await page.evaluate(() => {
-      const canvas = document.querySelector("canvas").getBoundingClientRect();
+      const element = document.querySelector("canvas");
+      const canvas = element.getBoundingClientRect();
       return {
-        canvas: { left: canvas.left, right: canvas.right, width: canvas.width, height: canvas.height },
+        canvas: {
+          left: canvas.left,
+          right: canvas.right,
+          width: canvas.width,
+          height: canvas.height,
+          bufferWidth: element.width,
+          bufferHeight: element.height,
+        },
         viewport: { width: innerWidth, height: innerHeight },
       };
     });
-    assert(
-      Math.abs(wideLayout.canvas.left - (wideLayout.viewport.width - wideLayout.canvas.right)) < 1,
-      "Ultrawide canvas must remain horizontally centered",
-    );
-    assert(
-      Math.abs(wideLayout.canvas.width / wideLayout.canvas.height - 8 / 5) < 0.001,
-      "Ultrawide canvas must preserve the 8:5 game aspect ratio",
+    assert.deepEqual(
+      { width: wideLayout.canvas.width, height: wideLayout.canvas.height },
+      wideLayout.viewport,
+      "Adaptive canvas must cover the browser viewport",
     );
     await page.screenshot({ path: path.join(output, "10-ultrawide.png") });
+    const hiDpiPage = await browser.newPage({
+      viewport: { width: 1727, height: 831 },
+      deviceScaleFactor: 2,
+    });
+    await hiDpiPage.goto(process.env.GAME_URL || "http://127.0.0.1:8060");
+    await hiDpiPage.locator("#status").waitFor({ state: "hidden", timeout: 30000 });
+    const hiDpi = await hiDpiPage.evaluate(() => {
+      const canvas = document.querySelector("canvas");
+      return {
+        cssWidth: canvas.clientWidth,
+        cssHeight: canvas.clientHeight,
+        bufferWidth: canvas.width,
+        bufferHeight: canvas.height,
+        dpr: devicePixelRatio,
+      };
+    });
+    assert.equal(hiDpi.bufferWidth, hiDpi.cssWidth * hiDpi.dpr);
+    assert.equal(hiDpi.bufferHeight, hiDpi.cssHeight * hiDpi.dpr);
+    await hiDpiPage.close();
     assert.equal(errors.length, 0, errors.join("\n"));
     fs.writeFileSync(
       path.join(output, "browser-results.json"),
-      JSON.stringify({ errors, layout, wideLayout, screenshots: 9 }, null, 2),
+      JSON.stringify({ errors, layout, wideLayout, hiDpi, screenshots: 9 }, null, 2),
     );
     console.log("Browser smoke passed: gameplay, resize, audible effects, pause and mute; no console errors.");
   } finally {
