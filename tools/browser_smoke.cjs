@@ -16,6 +16,26 @@ const path = require("node:path");
   });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    // Observe actual WebAudio output without calling into the game's internals.
+    await page.addInitScript(() => {
+      const connect = AudioNode.prototype.connect;
+      const meters = [];
+      AudioNode.prototype.connect = function (destination, ...args) {
+        const result = connect.call(this, destination, ...args);
+        if (destination instanceof AudioDestinationNode) {
+          const meter = this.context.createAnalyser();
+          meter.fftSize = 2048;
+          connect.call(this, meter);
+          meters.push(meter);
+        }
+        return result;
+      };
+      window.audioRms = () => Math.max(0, ...meters.map(meter => {
+        const samples = new Float32Array(meter.fftSize);
+        meter.getFloatTimeDomainData(samples);
+        return Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+      }));
+    });
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     page.on("console", message => {
@@ -26,13 +46,18 @@ const path = require("node:path");
     await page.locator('canvas[data-state="ready"]').waitFor();
     assert.equal(errors.length, 0, errors.join("\n"));
     await page.screenshot({ path: path.join(output, "01-ready.png") });
+    await page.keyboard.press("d");
+    await page.screenshot({ path: path.join(output, "08-debug-lines.png") });
+    await page.keyboard.press("d");
     await page.keyboard.press("Enter");
     await page.locator('canvas[data-state="playing"]').waitFor();
+    await page.waitForFunction(() => window.audioRms() > 0.0001, { }, { timeout: 8000 });
     // Intentional elapsed gameplay: reach the first apple, then freeze the run.
     await page.locator('canvas[data-score="1"]').waitFor({ timeout: 8000 });
     await page.screenshot({ path: path.join(output, "06-playing.png") });
     await page.keyboard.press("Escape");
     await page.locator('canvas[data-state="paused"]').waitFor();
+    await page.waitForFunction(() => window.audioRms() < 0.00001, { }, { timeout: 3000 });
     await page.screenshot({ path: path.join(output, "02-paused.png") });
     const paused = await page.screenshot();
     await page.waitForTimeout(350);
@@ -41,12 +66,17 @@ const path = require("node:path");
     // With no steering the snake must eventually hit the right wall.
     await page.locator('canvas[data-state="over"]').waitFor({ timeout: 12000 });
     await page.screenshot({ path: path.join(output, "03-game-over.png") });
+    // Sound control is rendered on the Godot canvas, in the lower-left footer.
+    await page.mouse.click(105, 865);
+    await page.waitForFunction(() => window.audioRms() < 0.00001, { }, { timeout: 3000 });
+    await page.mouse.click(105, 865);
+    await page.keyboard.press("d");
+    await page.screenshot({ path: path.join(output, "09-debug-collision.png") });
+    await page.keyboard.press("d");
     await page.keyboard.press("r");
     await page.locator('canvas[data-state="playing"][data-score="0"]').waitFor();
     await page.keyboard.down("ArrowRight");
-    // A held turn keeps the short snake circling until the first bomb appears.
-    await page.waitForTimeout(10500);
-    await page.screenshot({ path: path.join(output, "07-bomb.png") });
+    await page.waitForTimeout(500);
     await page.keyboard.up("ArrowRight");
     await page.keyboard.press("Escape");
     await page.locator('canvas[data-state="paused"]').waitFor();
@@ -60,8 +90,8 @@ const path = require("node:path");
     assert(!layout.overflow, "Game must fit viewport without horizontal scrolling");
     assert.deepEqual(layout.canvas, { width: 960, height: 600 });
     assert.equal(errors.length, 0, errors.join("\n"));
-    fs.writeFileSync(path.join(output, "browser-results.json"), JSON.stringify({ errors, layout, screenshots: 7 }, null, 2));
-    console.log("Browser smoke passed: load, start, pause/freeze, resume, death/restart, steering, resize; no console errors.");
+    fs.writeFileSync(path.join(output, "browser-results.json"), JSON.stringify({ errors, layout, screenshots: 8 }, null, 2));
+    console.log("Browser smoke passed: gameplay, resize, audible effects, pause and mute; no console errors.");
   } finally {
     await browser.close();
   }

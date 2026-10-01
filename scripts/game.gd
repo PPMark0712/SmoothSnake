@@ -2,14 +2,31 @@
 extends Node2D
 ## Presentation only: the simulation is independently runnable in headless tests.
 
-enum State { READY, PLAYING, PAUSED, OVER }
+enum State { READY, PLAYING, PAUSED, OVER, DYING }
 
 const Model = preload("res://scripts/snake_model.gd")
+const PICKUP_SOUNDS = [
+	preload("res://assets/audio/pickup_red.wav"),
+	preload("res://assets/audio/pickup_gold.wav"),
+	preload("res://assets/audio/pickup_rainbow.wav"),
+	preload("res://assets/audio/pickup_green.wav"),
+]
+const APPLE_COLORS = [
+	Color("#df6e55"),
+	Color("#e6b947"),
+	Color("#b093ce"),
+	Color("#6db84f"),
+]
 const INK := Color("#354737")
 const MUTED := Color("#859077")
 const GREEN := Color("#577d46")
 const PAPER := Color("#f8f4df")
-const ARENA_PANEL := Rect2(48, 130, 1344, 658)
+const DEBUG_LINE := Color("#1596a6")
+const DEBUG_WALL := Color("#d28a32")
+const DEBUG_SAFE := Color("#3fa66b")
+const DEBUG_LETHAL := Color("#dc4c45")
+const BLAST_ANIMATION_DURATION := 0.85
+const BLAST_DEATH_DELAY := 0.85
 
 var model := Model.new()
 var state := State.READY
@@ -24,11 +41,22 @@ var blasts: Array[Dictionary] = []
 var death_reason := ""
 var menu := Control.new()
 var primary := Button.new()
-var secondary := Button.new()
+var difficulty_buttons: Array[Button] = []
 var pause_button := Button.new()
 var sound_button := Button.new()
 var sound_enabled := true
 var audio := AudioStreamPlayer.new()
+var pickup_audio := AudioStreamPlayer.new()
+var board_dot_segments := PackedVector2Array()
+var bomb_dash_segments := PackedVector2Array()
+var rounded_style_cache: Dictionary = {}
+var debug_mode := false
+var debug_contact: Dictionary = {}
+var debug_contact_left := 0.0
+var eat_pulse := 0.0
+var impact_flash := 0.0
+var slide_fx_cooldown := 0.0
+var blast_death_left := 0.0
 
 
 func _ready() -> void:
@@ -41,10 +69,15 @@ func _ready() -> void:
 	if save.load("user://smoothsnake.cfg") == OK:
 		best = int(save.get_value("game", "best", 0))
 		sound_enabled = bool(save.get_value("game", "sound", true))
+		model.set_difficulty(int(save.get_value("game", "difficulty", Model.Difficulty.MEDIUM)))
 	model.apple_eaten.connect(_on_apple)
 	model.exploded.connect(_on_explosion)
 	model.died.connect(_on_death)
+	model.contact_evaluated.connect(_on_contact_evaluated)
+	build_draw_batches()
 	add_child(audio)
+	add_child(pickup_audio)
+	pickup_audio.volume_db = -9.0
 	build_ui()
 	model.reset()
 	set_state(State.READY)
@@ -52,16 +85,26 @@ func _ready() -> void:
 	layout_ui()
 
 
+func build_draw_batches() -> void:
+	for x in range(78, 1380, 26):
+		for y in range(158, 774, 26):
+			var center := Vector2(x, y)
+			board_dot_segments.append(center - Vector2(0.15, 0))
+			board_dot_segments.append(center + Vector2(0.15, 0))
+	for i in range(32):
+		var angle := TAU * float(i) / 32.0
+		bomb_dash_segments.append(Vector2.from_angle(angle) * Model.BLAST_RADIUS)
+		bomb_dash_segments.append(Vector2.from_angle(angle + 0.10) * Model.BLAST_RADIUS)
+
+
 func build_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 	layer.add_child(menu)
 	menu.add_child(primary)
-	menu.add_child(secondary)
 	layer.add_child(pause_button)
 	layer.add_child(sound_button)
 	style_button(primary, true)
-	style_button(secondary, false)
 	style_button(pause_button, false)
 	style_button(sound_button, false)
 	primary.pressed.connect(
@@ -71,7 +114,13 @@ func build_ui() -> void:
 			else:
 				start_run()
 	)
-	secondary.pressed.connect(start_run)
+	for difficulty in range(Model.Difficulty.HARD + 1):
+		var button := Button.new()
+		button.text = ["Easy", "Medium", "Hard"][difficulty]
+		button.pressed.connect(start_difficulty.bind(difficulty))
+		menu.add_child(button)
+		difficulty_buttons.append(button)
+	update_difficulty_buttons()
 	pause_button.text = "II   Pause"
 	pause_button.pressed.connect(toggle_pause)
 	sound_button.pressed.connect(
@@ -109,8 +158,10 @@ func layout_ui() -> void:
 	# The viewport stretches the complete 1440 × 900 canvas with its controls.
 	primary.position = Vector2(520, 526)
 	primary.size = Vector2(400, 52)
-	secondary.position = Vector2(520, 590)
-	secondary.size = Vector2(400, 44)
+	for i in range(difficulty_buttons.size()):
+		difficulty_buttons[i].position = Vector2(568 + i * 104, 478)
+		difficulty_buttons[i].size = Vector2(96, 36)
+		difficulty_buttons[i].add_theme_font_size_override("font_size", 14)
 	pause_button.position = Vector2(1260, 47)
 	pause_button.size = Vector2(132, 48)
 	sound_button.position = Vector2(48, 851)
@@ -120,28 +171,40 @@ func layout_ui() -> void:
 
 func set_state(value: State) -> void:
 	state = value
-	menu.visible = state != State.PLAYING
-	secondary.visible = state == State.PAUSED
+	menu.visible = state in [State.READY, State.PAUSED, State.OVER]
 	pause_button.visible = state == State.PLAYING
 	primary.text = (
 		"Let's play"
 		if state == State.READY
 		else ("Resume" if state == State.PAUSED else "Play again")
 	)
-	secondary.text = "Restart run"
+	update_difficulty_buttons()
 	if menu.visible:
 		primary.grab_focus()
 	else:
 		primary.release_focus()
+	update_audio()
 	sync_web_status()
 	queue_redraw()
+
+
+func start_difficulty(difficulty: int) -> void:
+	model.set_difficulty(difficulty)
+	update_difficulty_buttons()
+	save_settings()
+	start_run()
+
+
+func update_difficulty_buttons() -> void:
+	for i in range(difficulty_buttons.size()):
+		style_button(difficulty_buttons[i], i == model.difficulty)
 
 
 func sync_web_status() -> void:
 	if not OS.has_feature("web"):
 		return
 	# Publish the visible state on the canvas for accessibility and browser checks.
-	var status_name: String = ["ready", "playing", "paused", "over"][state]
+	var status_name: String = ["ready", "playing", "paused", "over", "dying"][state]
 	var label := (
 		"SmoothSnake. %s. Score %d. Arrow keys steer; Escape pauses." % [status_name, model.score]
 	)
@@ -164,6 +227,12 @@ func start_run() -> void:
 	popups.clear()
 	blasts.clear()
 	death_reason = ""
+	debug_contact.clear()
+	debug_contact_left = 0.0
+	eat_pulse = 0.0
+	impact_flash = 0.0
+	slide_fx_cooldown = 0.0
+	blast_death_left = 0.0
 	set_state(State.PLAYING)
 
 
@@ -182,7 +251,11 @@ func _notification(what: int) -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
-	if event.keycode == KEY_ESCAPE:
+	if event.physical_keycode == KEY_D:
+		debug_mode = not debug_mode
+		queue_redraw()
+		get_viewport().set_input_as_handled()
+	elif event.keycode == KEY_ESCAPE:
 		toggle_pause()
 		get_viewport().set_input_as_handled()
 	elif event.keycode == KEY_R and state in [State.PAUSED, State.OVER]:
@@ -193,16 +266,17 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func _physics_process(delta: float) -> void:
 	if state == State.PLAYING:
-		var left := Input.is_physical_key_pressed(KEY_LEFT) or Input.is_physical_key_pressed(KEY_A)
-		var right := (
-			Input.is_physical_key_pressed(KEY_RIGHT) or Input.is_physical_key_pressed(KEY_D)
-		)
+		var left := Input.is_physical_key_pressed(KEY_LEFT)
+		var right := Input.is_physical_key_pressed(KEY_RIGHT)
 		model.step(delta, float(right) - float(left))
 
 
 func _process(delta: float) -> void:
 	if state != State.PAUSED:
 		visual_time += delta
+		eat_pulse = maxf(0.0, eat_pulse - delta)
+		impact_flash = maxf(0.0, impact_flash - delta)
+		slide_fx_cooldown = maxf(0.0, slide_fx_cooldown - delta)
 		for i in range(effects.size() - 1, -1, -1):
 			effects[i]["life"] -= delta
 			effects[i]["position"] += effects[i]["velocity"] * delta
@@ -218,6 +292,14 @@ func _process(delta: float) -> void:
 			blasts[i]["life"] -= delta
 			if blasts[i]["life"] <= 0.0:
 				blasts.remove_at(i)
+	if state == State.DYING:
+		blast_death_left -= delta
+		if blast_death_left <= 0.0:
+			set_state(State.OVER)
+	if state == State.PLAYING and debug_contact_left > 0.0:
+		debug_contact_left -= delta
+		if debug_contact_left <= 0.0:
+			debug_contact.clear()
 	queue_redraw()
 
 
@@ -227,32 +309,51 @@ func _draw() -> void:
 	draw_rect(Rect2(0, 0, 1440, 900), PAPER)
 	draw_brand()
 	draw_hud()
-	rounded_box(ARENA_PANEL, Color("#fdfbed"), 24, Color("#dcdcc0"), 2)
-	for x in range(78, 1380, 26):
-		for y in range(158, 774, 26):
-			draw_circle(Vector2(x, y), 0.8, Color(0.57, 0.60, 0.42, 0.14))
+	rounded_box(
+		Rect2(Model.ARENA.position + Vector2(0, 4), Model.ARENA.size),
+		Color(0.33, 0.36, 0.20, 0.09),
+		Model.ARENA_CORNER_RADIUS,
+	)
+	rounded_box(
+		Model.ARENA,
+		Color("#fdfbed"),
+		Model.ARENA_CORNER_RADIUS,
+		Color("#d5d6b7"),
+		3,
+	)
+	draw_multiline(board_dot_segments, Color(0.57, 0.60, 0.42, 0.14), 1.6, true)
 	for apple in model.apples:
 		var p: Vector2 = apple["position"]
-		draw_apple(p + Vector2(0, sin(visual_time * 2.6 + p.x) * 2.0), apple["kind"])
+		var bob := sin(visual_time * 2.6 + p.x) * 2.0
+		var proximity := clampf(1.0 - model.head.distance_to(p) / 100.0, 0.0, 1.0)
+		var anticipation := 1.0 + proximity * (0.025 + 0.025 * sin(visual_time * 9.0))
+		draw_apple(p + Vector2(0, bob), apple["kind"], anticipation)
 	for bomb in model.bombs:
 		draw_bomb(bomb)
 	draw_snake()
 	for blast in blasts:
-		var alpha: float = blast["life"] / 0.65
+		var progress: float = 1.0 - blast["life"] / BLAST_ANIMATION_DURATION
+		var fade := 1.0 - progress
+		var expansion := ease(progress, -2.0)
 		draw_circle(
 			blast["position"],
-			blast["radius"] * (1.0 - alpha * 0.3),
-			Color(0.90, 0.39, 0.24, alpha * 0.20)
+			blast["radius"] * (0.18 + expansion * 0.82),
+			Color(0.94, 0.42, 0.18, sin(progress * PI) * 0.34),
 		)
 		draw_arc(
 			blast["position"],
-			blast["radius"] * (1.0 - alpha * 0.15),
+			blast["radius"] * (0.20 + expansion * 0.96),
 			0,
 			TAU,
 			80,
-			Color(0.91, 0.45, 0.27, alpha),
-			3,
-			true
+			Color(0.91, 0.35, 0.18, fade),
+			5.0 - progress * 2.0,
+			true,
+		)
+		draw_circle(
+			blast["position"],
+			blast["radius"] * 0.22 * fade,
+			Color(1.0, 0.86, 0.46, fade * 0.82),
 		)
 	for particle in effects:
 		var color: Color = particle["color"]
@@ -262,9 +363,28 @@ func _draw() -> void:
 		var color: Color = popup["color"]
 		color.a = minf(1.0, popup["life"] * 2.0)
 		text_at(popup["text"], popup["position"], 25, color, bold)
+	if impact_flash > 0.0:
+		var impact_alpha := impact_flash / 0.45
+		draw_circle(
+			model.head,
+			30.0 + (1.0 - impact_alpha) * 58.0,
+			Color(0.86, 0.25, 0.19, 0.10 * impact_alpha),
+		)
+		draw_arc(
+			model.head,
+			34.0 + (1.0 - impact_alpha) * 70.0,
+			0,
+			TAU,
+			64,
+			Color(0.79, 0.24, 0.18, 0.65 * impact_alpha),
+			3.0,
+			true,
+		)
 	draw_footer()
-	if state != State.PLAYING:
+	if menu.visible:
 		draw_menu()
+	if debug_mode:
+		draw_debug_overlay()
 
 
 func draw_brand() -> void:
@@ -278,9 +398,15 @@ func draw_brand() -> void:
 
 func draw_hud() -> void:
 	if model.gold_left > 0:
-		status_pill(Vector2(638, 52), "2× SPEED", model.gold_left, 10.0, Color("#c49a39"))
+		status_pill(Vector2(638, 52), "1.5× SPEED", model.gold_left, 10.0, Color("#c49a39"))
 	if model.rainbow_left > 0:
-		status_pill(Vector2(818, 52), "APPLE RAIN", model.rainbow_left, 20.0, Color("#9b7cbd"))
+		status_pill(
+			Vector2(818, 52),
+			"APPLE RAIN",
+			model.rainbow_left,
+			Model.RAINBOW_DURATION,
+			Color("#9b7cbd"),
+		)
 	rounded_box(Rect2(1016, 35, 104, 76), Color("#efecd7"), 16)
 	rounded_box(Rect2(1132, 35, 108, 76), Color("#e3eacb"), 16)
 	text_at("BEST", Vector2(1034, 58), 11, MUTED, bold)
@@ -300,30 +426,103 @@ func status_pill(
 
 
 func draw_snake() -> void:
+	var forward := Vector2.from_angle(model.heading)
+	if model.gold_left > 0:
+		for i in range(3, 0, -1):
+			var wake_position := model.head - forward * (16.0 + i * 12.0)
+			draw_circle(
+				wake_position,
+				model.head_radius() * (0.52 - i * 0.07),
+				Color(0.86, 0.71, 0.30, 0.06 + i * 0.025),
+			)
 	for i in range(model.body.size() - 1, -1, -1):
 		var t := float(i) / maxf(1.0, model.body.size() - 1.0)
-		ball(model.body[i], model.radius(), Color("#a9c775").lerp(Color("#cfdb94"), t * 0.65))
+		var body_color := Color("#a9c775").lerp(Color("#cfdb94"), t * 0.65)
+		ball(model.body[i], model.radius(), body_color)
+		if i % 2 == 1:
+			draw_circle(
+				model.body[i] + Vector2(-model.radius() * 0.22, -model.radius() * 0.24),
+				maxf(1.0, model.radius() * 0.10),
+				Color(0.36, 0.48, 0.23, 0.22),
+			)
 	if model.gold_left > 0:
 		draw_arc(model.head, model.head_radius() + 6, 0, TAU, 48, Color("#dec270"), 2, true)
-	ball(model.head, model.head_radius(), Color("#a7c774"))
-	var forward := Vector2.from_angle(model.heading)
+	var pulse_phase := 1.0 - eat_pulse / 0.28
+	var visual_head_radius := model.head_radius()
+	if eat_pulse > 0.0:
+		visual_head_radius *= 1.0 + sin(pulse_phase * PI) * 0.09
+	ball(model.head, visual_head_radius, Color("#a7c774"))
 	var side := forward.orthogonal()
 	for sign_value in [-1.0, 1.0]:
 		var eye: Vector2 = (
 			model.head
-			+ forward * model.head_radius() * 0.40
-			+ side * sign_value * model.head_radius() * 0.46
+			+ forward * visual_head_radius * 0.40
+			+ side * sign_value * visual_head_radius * 0.46
 		)
-		draw_circle(eye, model.head_radius() * 0.25, Color("#fffef1"))
+		draw_circle(eye, visual_head_radius * 0.25, Color("#fffef1"))
 		if state == State.OVER:
-			var r := model.head_radius() * 0.10
+			var r := visual_head_radius * 0.10
 			draw_line(eye - Vector2(r, r), eye + Vector2(r, r), INK, 1.7, true)
 			draw_line(eye + Vector2(-r, r), eye + Vector2(r, -r), INK, 1.7, true)
 		else:
-			draw_circle(eye + forward * 1.1, model.head_radius() * 0.12, INK)
+			draw_circle(eye + forward * 1.1, visual_head_radius * 0.12, INK)
 			draw_circle(eye + forward * 1.1 + Vector2(-0.5, -0.7), 0.65, Color.WHITE)
-		var cheek: Vector2 = model.head + side * sign_value * model.head_radius() * 0.70
-		draw_circle(cheek, model.head_radius() * 0.14, Color("#dfac83"))
+		var cheek: Vector2 = model.head + side * sign_value * visual_head_radius * 0.70
+		draw_circle(cheek, visual_head_radius * 0.14, Color("#dfac83"))
+
+
+func draw_debug_overlay() -> void:
+	rounded_box(
+		Model.ARENA,
+		Color.TRANSPARENT,
+		Model.ARENA_CORNER_RADIUS,
+		DEBUG_WALL,
+		2,
+	)
+	if not model.body.is_empty():
+		draw_line(model.head, model.body[0], Color(DEBUG_LINE, 0.45), 1.5, true)
+	for i in range(1, model.body.size()):
+		draw_line(model.body[i - 1], model.body[i], Color(DEBUG_LINE, 0.85), 2.0, true)
+	for center in model.body:
+		draw_circle(center, 2.5, DEBUG_LINE)
+	draw_debug_arrow(
+		model.head,
+		Vector2.from_angle(model.heading),
+		72.0,
+		Color("#6956c7"),
+	)
+	if debug_contact.is_empty():
+		return
+
+	var segment_a: Vector2 = debug_contact.segment_a
+	var segment_b: Vector2 = debug_contact.segment_b
+	var point: Vector2 = debug_contact.point
+	var normal: Vector2 = debug_contact.normal
+	var result_color := DEBUG_LETHAL if debug_contact.lethal else DEBUG_SAFE
+	draw_line(segment_a, segment_b, Color(result_color, 0.28), 9.0, true)
+	draw_line(segment_a, segment_b, result_color, 3.5, true)
+	draw_circle(point, 5.0, result_color)
+	draw_debug_arrow(point, normal, 64.0, Color("#ee5ead"))
+	draw_debug_arrow(point, debug_contact.direction, 64.0, Color("#6956c7"))
+
+
+func draw_debug_arrow(origin: Vector2, vector: Vector2, length: float, color: Color) -> void:
+	if vector.length_squared() <= 0.0001:
+		return
+	var direction := vector.normalized()
+	var tip := origin + direction * length
+	var side := direction.orthogonal()
+	draw_line(origin, tip, color, 2.5, true)
+	draw_colored_polygon(
+		PackedVector2Array(
+			[
+				tip,
+				tip - direction * 11.0 + side * 5.0,
+				tip - direction * 11.0 - side * 5.0,
+			]
+		),
+		color,
+	)
 
 
 func ball(position: Vector2, r: float, color: Color) -> void:
@@ -344,8 +543,7 @@ func ball(position: Vector2, r: float, color: Color) -> void:
 
 
 func draw_apple(position: Vector2, kind: int, scale_value: float = 1.0) -> void:
-	var colors := [Color("#df6e55"), Color("#e6b947"), Color("#b093ce")]
-	var color: Color = colors[kind]
+	var color: Color = APPLE_COLORS[kind]
 	var outline := PackedVector2Array(
 		[
 			Vector2(-3, -10),
@@ -387,19 +585,35 @@ func draw_apple(position: Vector2, kind: int, scale_value: float = 1.0) -> void:
 	if kind == Model.Apple.RAINBOW:
 		draw_colored_polygon(
 			PackedVector2Array(
-				[Vector2(-12, -4), Vector2(12, -4), Vector2(12, 0), Vector2(-12, 0)]
+				[Vector2(-11, -8), Vector2(10, -8), Vector2(12, -5), Vector2(-12, -5)]
 			),
-			Color("#ebbc73")
-		)
-		draw_colored_polygon(
-			PackedVector2Array([Vector2(-11, 1), Vector2(12, 1), Vector2(10, 5), Vector2(-10, 5)]),
-			Color("#91b888")
+			Color("#df6e73")
 		)
 		draw_colored_polygon(
 			PackedVector2Array(
-				[Vector2(-9, 6), Vector2(10, 6), Vector2(6, 11), Vector2(0, 9), Vector2(-7, 10)]
+				[Vector2(-12, -4), Vector2(12, -4), Vector2(12, -1), Vector2(-12, -1)]
 			),
-			Color("#85b8c2")
+			Color("#efa34f")
+		)
+		draw_colored_polygon(
+			PackedVector2Array([Vector2(-12, 0), Vector2(12, 0), Vector2(11, 3), Vector2(-11, 3)]),
+			Color("#e8cf55")
+		)
+		draw_colored_polygon(
+			PackedVector2Array([Vector2(-11, 4), Vector2(11, 4), Vector2(9, 7), Vector2(-10, 7)]),
+			Color("#78b979")
+		)
+		draw_colored_polygon(
+			PackedVector2Array(
+				[
+					Vector2(-9, 8),
+					Vector2(8, 8),
+					Vector2(6, 11),
+					Vector2(0, 9),
+					Vector2(-7, 10),
+				]
+			),
+			Color("#65a9c4")
 		)
 	draw_rect(Rect2(-9, -6, 4, 6), Color(1, 1, 0.91, 0.70))
 	draw_rect(Rect2(-1, -17, 3, 8), Color("#7b6443"))
@@ -415,11 +629,9 @@ func draw_bomb(bomb: Dictionary) -> void:
 	var remaining: float = bomb["left"]
 	var pulse := 0.5 + sin(visual_time * (14.0 if remaining < 2.0 else 6.0)) * 0.5
 	draw_circle(p, Model.BLAST_RADIUS, Color(0.83, 0.38, 0.26, 0.035 + pulse * 0.035))
-	for i in range(32):
-		var angle := TAU * float(i) / 32.0
-		draw_arc(
-			p, Model.BLAST_RADIUS, angle, angle + 0.10, 4, Color(0.76, 0.44, 0.29, 0.28), 1.4, true
-		)
+	draw_set_transform(p)
+	draw_multiline(bomb_dash_segments, Color(0.76, 0.44, 0.29, 0.28), 1.4, true)
+	draw_set_transform(Vector2.ZERO)
 	ellipse(p + Vector2(0, 23), Vector2(19, 5), Color(0.34, 0.34, 0.25, 0.15))
 	var polygon := PackedVector2Array()
 	for i in range(12):
@@ -443,30 +655,37 @@ func draw_bomb(bomb: Dictionary) -> void:
 func draw_footer() -> void:
 	draw_apple(Vector2(66, 817), Model.Apple.RED, 0.65)
 	text_at("+1", Vector2(86, 824), 15, INK, bold)
-	draw_apple(Vector2(157, 817), Model.Apple.GOLD, 0.65)
-	text_at("+5  ·  2× speed / 10s", Vector2(177, 824), 14, INK)
-	draw_apple(Vector2(372, 817), Model.Apple.RAINBOW, 0.65)
-	text_at("+10  ·  apple rain / 20s", Vector2(392, 824), 14, INK)
-	draw_circle(Vector2(609, 817), 8, Color("#505d53"))
-	text_at("5s fuse · keep clear", Vector2(628, 824), 14, MUTED)
+	draw_apple(Vector2(140, 817), Model.Apple.GREEN, 0.65)
+	text_at("+2", Vector2(160, 824), 15, INK, bold)
+	draw_apple(Vector2(220, 817), Model.Apple.GOLD, 0.65)
+	text_at("+5  ·  1.5× speed / 10s", Vector2(240, 824), 14, INK)
+	draw_apple(Vector2(435, 817), Model.Apple.RAINBOW, 0.65)
+	text_at("+10  ·  10 apples / 10s", Vector2(455, 824), 14, INK)
+	draw_circle(Vector2(670, 817), 8, Color("#505d53"))
+	text_at("5s fuse · keep clear", Vector2(689, 824), 14, MUTED)
 	keycap(Rect2(1045, 802, 32, 29), "←")
 	keycap(Rect2(1084, 802, 32, 29), "→")
 	text_at("steer", Vector2(1127, 823), 15, INK)
 	keycap(Rect2(1212, 802, 47, 29), "esc")
 	text_at("pause", Vector2(1270, 823), 15, INK)
-	text_at("Glancing hits slide. Head-on hits end the run.", Vector2(181, 871), 12, MUTED)
+	text_at("Wide glances slide. Sharp hits end the run.", Vector2(181, 871), 12, MUTED)
 	right_text("MADE FOR A LITTLE BREAK", Vector2(1391, 871), 11, MUTED)
 
 
 func draw_menu() -> void:
-	draw_rect(ARENA_PANEL.grow(-2), Color(0.973, 0.957, 0.875, 0.66))
+	rounded_box(
+		Model.ARENA.grow(-2),
+		Color(0.973, 0.957, 0.875, 0.66),
+		Model.ARENA_CORNER_RADIUS - 2,
+	)
 	var card := Rect2(470, 263, 500, 396)
 	rounded_box(Rect2(card.position + Vector2(0, 10), card.size), Color(0.30, 0.35, 0.22, 0.08), 26)
 	rounded_box(card, Color("#fffdf0"), 26, Color("#dfdfc4"), 1)
 	if state == State.READY:
-		draw_apple(Vector2(681, 312), Model.Apple.RED, 0.8)
-		draw_apple(Vector2(720, 305), Model.Apple.GOLD, 0.95)
-		draw_apple(Vector2(759, 312), Model.Apple.RAINBOW, 0.8)
+		draw_apple(Vector2(660, 312), Model.Apple.RED, 0.8)
+		draw_apple(Vector2(700, 305), Model.Apple.GREEN, 0.9)
+		draw_apple(Vector2(740, 305), Model.Apple.GOLD, 0.95)
+		draw_apple(Vector2(780, 312), Model.Apple.RAINBOW, 0.8)
 		center_text("Ready to roll?", Vector2(720, 382), 38, INK, bold)
 		center_text("Follow your appetite.", Vector2(720, 425), 18, MUTED)
 		center_text("Left / Right to turn. Leave room to grow.", Vector2(720, 456), 17, INK)
@@ -495,8 +714,8 @@ func draw_menu() -> void:
 		)
 		center_text("That's a wrap.", Vector2(720, 368), 36, INK, bold)
 		center_text(death_reason, Vector2(720, 402), 16, MUTED)
-		center_text(str(model.score), Vector2(720, 474), 54, GREEN, bold)
-		center_text("POINTS", Vector2(720, 497), 11, MUTED, bold)
+		center_text(str(model.score), Vector2(720, 446), 54, GREEN, bold)
+		center_text("POINTS", Vector2(720, 469), 11, MUTED, bold)
 		center_text("Press R to try again", Vector2(720, 615), 13, MUTED)
 
 
@@ -522,11 +741,15 @@ func keycap(rect: Rect2, label: String) -> void:
 func rounded_box(
 	rect: Rect2, color: Color, corner: int, border: Color = Color.TRANSPARENT, width: int = 0
 ) -> void:
-	var style := StyleBoxFlat.new()
-	style.bg_color = color
-	style.set_corner_radius_all(corner)
-	style.border_color = border
-	style.set_border_width_all(width)
+	var key := "%s:%d:%s:%d" % [color.to_html(), corner, border.to_html(), width]
+	var style: StyleBoxFlat = rounded_style_cache.get(key)
+	if style == null:
+		style = StyleBoxFlat.new()
+		style.bg_color = color
+		style.set_corner_radius_all(corner)
+		style.border_color = border
+		style.set_border_width_all(width)
+		rounded_style_cache[key] = style
 	draw_style_box(style, rect)
 
 
@@ -580,13 +803,13 @@ func right_text(value: String, position: Vector2, size_value: int, color: Color)
 
 
 func _on_apple(kind: int, position: Vector2, points: int) -> void:
-	var colors := [Color("#df6e55"), Color("#dbb44f"), Color("#a78bc7")]
+	eat_pulse = 0.28
 	popups.append(
 		{
 			"position": position + Vector2(-10, -24),
 			"text": "+%d" % points,
 			"life": 1.2,
-			"color": colors[kind]
+			"color": APPLE_COLORS[kind]
 		}
 	)
 	for i in range(12):
@@ -596,35 +819,90 @@ func _on_apple(kind: int, position: Vector2, points: int) -> void:
 				"velocity": Vector2.from_angle(TAU * i / 12.0) * (45.0 + i * 4),
 				"life": 0.7,
 				"size": 2.0 + i % 3,
-				"color": colors[kind]
+				"color": APPLE_COLORS[kind]
 			}
 		)
 	if model.score > best:
 		best = model.score
 		save_settings()
 	sync_web_status()
-	play_tone(660.0 + kind * 180.0, 0.13)
+	if sound_enabled:
+		pickup_audio.stream = PICKUP_SOUNDS[kind]
+		pickup_audio.play()
 
 
 func _on_explosion(position: Vector2, blast_radius: float) -> void:
-	blasts.append({"position": position, "radius": blast_radius, "life": 0.65})
+	blasts.append({"position": position, "radius": blast_radius, "life": BLAST_ANIMATION_DURATION})
+	for i in range(28):
+		var direction := Vector2.from_angle(TAU * i / 28.0)
+		(
+			effects
+			. append(
+				{
+					"position": position + direction * 8.0,
+					"velocity": direction * (95.0 + float(i % 7) * 22.0),
+					"life": 0.55 + float(i % 5) * 0.055,
+					"size": 2.5 + float(i % 4),
+					"color": Color("#ffd05a") if i % 3 == 0 else Color("#e8653f"),
+				}
+			)
+		)
 	play_tone(85, 0.23)
+
+
+func _on_contact_evaluated(info: Dictionary) -> void:
+	debug_contact = info.duplicate()
+	debug_contact_left = 3.0
+	if info.lethal or slide_fx_cooldown > 0.0:
+		return
+	slide_fx_cooldown = 0.08
+	var tangent: Vector2 = info.direction.slide(info.normal).normalized()
+	for i in range(4):
+		var spread := (float(i) - 1.5) * 9.0
+		(
+			effects
+			. append(
+				{
+					"position": info.point + info.normal * 2.0,
+					"velocity": -tangent * (28.0 + i * 7.0) + info.normal * spread,
+					"life": 0.28 + i * 0.035,
+					"size": 1.4 + i * 0.35,
+					"color": Color("#c6a85b"),
+				}
+			)
+		)
 
 
 func _on_death(reason: String) -> void:
 	death_reason = reason
-	set_state(State.OVER)
+	impact_flash = 0.45
+	if reason == "Caught in a blast":
+		blast_death_left = BLAST_DEATH_DELAY
+		set_state(State.DYING)
+	else:
+		set_state(State.OVER)
 	play_tone(180, 0.30)
 
 
 func update_sound_button() -> void:
 	sound_button.text = "Sound " + ("on" if sound_enabled else "off")
+	update_audio()
+
+
+func update_audio() -> void:
+	if not sound_enabled:
+		audio.stop()
+		pickup_audio.stop()
+		return
+	audio.stream_paused = state == State.PAUSED
+	pickup_audio.stream_paused = state == State.PAUSED
 
 
 func save_settings() -> void:
 	var save := ConfigFile.new()
 	save.set_value("game", "best", best)
 	save.set_value("game", "sound", sound_enabled)
+	save.set_value("game", "difficulty", model.difficulty)
 	var error := save.save("user://smoothsnake.cfg")
 	if error != OK:
 		push_warning("Could not save local preferences: %s" % error_string(error))
