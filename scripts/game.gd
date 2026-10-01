@@ -714,7 +714,7 @@ func draw_menu() -> void:
 		)
 		center_text("That's a wrap.", Vector2(720, 368), 36, INK, bold)
 		center_text(death_reason, Vector2(720, 402), 16, MUTED)
-		center_text(str(model.score), Vector2(720, 446), 54, GREEN, bold)
+		center_text(str(model.score), Vector2(720, 446), 40, GREEN, bold)
 		center_text("POINTS", Vector2(720, 469), 11, MUTED, bold)
 		center_text("Press R to try again", Vector2(720, 615), 13, MUTED)
 

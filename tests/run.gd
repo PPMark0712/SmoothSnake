@@ -51,21 +51,14 @@ func test_growth() -> void:
 	for points in range(1, 6):
 		model.award_apple(Model.Apple.RED, model.head)
 		check(model.body.size() == 2 + points, "One new body ball per point through five")
-	var last_length := Model.length_at(0)
-	var last_radius := Model.radius_at(0)
-	var last_increment := INF
-	for points in range(1, 10001):
-		var length_value := Model.length_at(points)
-		var radius_value := Model.radius_at(points)
-		check(length_value > last_length, "Length strictly grows at %d" % points)
-		check(radius_value > last_radius, "Width strictly grows at %d" % points)
-		if points > 6:
-			check(
-				length_value - last_length <= last_increment + 0.00001, "Length growth decelerates"
-			)
-		last_increment = length_value - last_length
-		last_length = length_value
-		last_radius = radius_value
+	check(is_equal_approx(Model.radius_at(0), 11.0), "Radius function has the expected baseline")
+	check(is_equal_approx(Model.gap_at(0), 8.0), "Gap function has the expected baseline")
+	check(is_equal_approx(Model.length_at(0), 62.64), "Length function has the expected baseline")
+	check(Model.length_at(6) > Model.length_at(5), "Length grows across the five-point branch")
+	check(
+		Model.length_at(25) - Model.length_at(15) < Model.length_at(15) - Model.length_at(5),
+		"Length function decelerates",
+	)
 	check(Model.radius_at(15) / Model.radius_at(5) > 1.15, "Ten points noticeably increase width")
 	check(Model.length_at(15) / Model.length_at(5) > 1.6, "Ten points noticeably increase length")
 

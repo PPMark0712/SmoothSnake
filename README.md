@@ -1,121 +1,130 @@
 # SmoothSnake
 
-Godot **4.7.2 + GDScript** 连续平面贪吃蛇。浅黄色画板、圆球组成的小蛇、程序绘制的像素苹果和炸弹，无外部美术或字体依赖。发布目标为电脑浏览器，游戏内使用英文短标签。
+SmoothSnake 是一个使用 **Godot 4.7.2 + GDScript** 开发的连续平面贪吃蛇游戏，面向桌面浏览器发布。游戏资源由程序绘制或随仓库提供，不依赖外部美术与字体。
 
-## 本地试玩
+## 在线游玩
 
-已生成的网页包可直接启动：
+**[https://ppmark0712.github.io/SmoothSnake/](https://ppmark0712.github.io/SmoothSnake/)**
 
-```bash
-python3 tools/web.py serve
-```
+无需下载或安装，使用桌面浏览器打开即可游玩。
 
-访问 **http://127.0.0.1:8060**。不要双击 `index.html`，浏览器需要通过 HTTP 加载 WebAssembly。
+## 本地运行
 
-修改代码后，重新导出并启动：
+### 环境要求
+
+- Python 3
+- Godot **4.7.2 stable**（必须与项目版本一致）
+- 首次构建时可访问网络，用于下载约 20 MB 的 Web 导出模板
+
+在仓库根目录执行：
 
 ```bash
 python3 tools/web.py dev
 ```
 
-脚本自动寻找 Godot 4.7.2，并从官方发行包下载两个 Web 导出模板到 `.tools/templates/`。只下载约 20 MB 的 Web 模板，不下载完整的跨平台模板包。需要 Python 3 和首次下载时的网络访问；安装好模板后可离线构建。
+脚本会完成以下工作：
 
-如未找到 Godot，可指定路径：
+1. 查找本机的 Godot 4.7.2。
+2. 将 Web 导出模板下载到 `.tools/templates/`（仅首次执行）。
+3. 导出游戏到 `build/web/`。
+4. 在 <http://127.0.0.1:8060> 启动本地服务器。
+
+使用 `Ctrl+C` 停止服务器。Web 版本必须通过 HTTP 访问，不能直接双击 `build/web/index.html`。
+
+如果脚本没有找到 Godot，可显式指定可执行文件：
 
 ```bash
 GODOT_BIN=/path/to/godot python3 tools/web.py dev
 ```
 
-`python3 tools/web.py build` 仅构建，输出到 `build/web/`；`serve --port 8080` 可更改端口。也可以在 Godot 编辑器中打开 `project.godot`，按 F6/F5 调试，使用 **Web** 预设导出。编辑器导出前先运行 `python3 tools/fetch_web_templates.py`。
+脚本会依次检查 `GODOT_BIN`、`.tools/godot`、`PATH` 中的 `godot` / `godot4`，以及 macOS 默认安装位置。
 
-## 操作与规则
+## 常用命令
 
-| 操作 | 按键 |
+| 命令 | 用途 |
 | --- | --- |
-| 开始 | Enter 或点击 Let's play |
-| 向左 / 向右转 | ← / → |
-| 暂停 / 继续 | Esc，或 Pause / Resume 按钮 |
-| 重新开始 | 点击任意难度；结束后 Play again；暂停或结束时按 R |
-| 难度 | 菜单内 Easy / Medium / Hard 按钮，点击后立即开始新一局 |
-| 音效开关 | 左下角 Sound on / off |
+| `python3 tools/web.py dev` | 重新构建并启动本地服务器 |
+| `python3 tools/web.py build` | 仅构建 Web 版本，输出到 `build/web/` |
+| `python3 tools/web.py serve` | 启动已有的 Web 构建，不重新导出 |
+| `python3 tools/web.py serve --port 8080` | 使用指定端口启动已有构建 |
+| `python3 tools/fetch_web_templates.py` | 仅下载或检查 Web 导出模板 |
+| `python3 tools/generate_audio.py` | 重新生成四类苹果的拾取音效 |
 
-蛇持续前进。红苹果 +1；绿苹果 +2；金苹果 +5，并使当前速度变为 1.5 倍、持续 10 秒；彩色苹果 +10，随后 10 秒内每秒在空地额外生成一个红或绿苹果，共 10 个。
+完成首次模板下载后，后续构建可以离线进行。
 
-- 同类增益再次拾取时刷新持续时间，不叠加倍率。彩色苹果同时重置一秒生成节奏；金色与彩色效果可以共存。
-- 普通补给维持至少 5 个苹果；苹果雨生成的 10 个红/绿苹果是额外补给，不计入这一最低数量限制，也不会立即消失。Easy / Medium 的随机种类概率为红 36%、绿 36%、金 18%、彩色 10%；Hard 为红 30%、绿 30%、金 30%、彩色 10%。开局正前方的引导苹果固定为红色。
-- 炸弹按难度每 5 / 2.5 / 1.25 秒尝试生成一个，分别对应 Easy / Medium / Hard；默认 Medium。每颗炸弹完整倒计时 5 秒后爆炸，蛇头直接碰到炸弹也会立即引爆。虚线圈表示 108 像素爆炸半径；爆炸瞬间蛇头中心在圈内（含边界）即死亡，只有身体进入不会触发或受到爆炸伤害。被炸中后会先冻结玩法并播放约 0.85 秒的冲击波与碎屑动画，再显示结算界面。炸弹不会生成在蛇头按当前速度一秒内可达的区域，金苹果加速期间该禁刷区会同步扩大。生成器同时优先选择与现有爆炸圈不相交的位置，空间不足时使用合法候选中间距最大的位置。
-- 游戏区域是圆角矩形，画出的边框就是真实墙面。碰撞按蛇头半径精确内缩，因此贴墙时蛇头外缘恰好接触可见边框；圆角使用连续圆弧法向和切线，平行滑行可持续绕过四个圆角。
-- 撞击墙或自身时，以蛇头入射方向与迎向碰撞的法向计算夹角：`<45°` 死亡；`≥45°` 不死亡，立即将运动方向投影到接触面的切线，自动修正为平行方向并纠正重叠。自身碰撞先由相交的身体圆定位候选，将相邻身体圆心视为线段，再从候选圆心前后的两条线段中选取离蛇头圆心最近的一条，以该线段的法向和切线完成判定与修正，而不是使用单个身体圆的径向。严格判定式为 `-direction.dot(n) > cos(45°)`，因此恰好 45° 属于可滑行边界。
-- 头附近的两节身体作为连接的颈部，不参与自身碰撞；后续身体圆球逐个检测。
-- 暂停或切换到其他窗口时，移动、炸弹、增益和补给全部暂停。重玩清空本局状态。
-- 最高分、难度与音效偏好保存在浏览器本地存储；清理站点数据会重置。
-- 苹果按自身尺寸检查完整圆角游戏区；炸弹按完整爆炸圈加外圈线宽检查，预警圈和爆炸圈都不会超出游戏边界。找不到同时满足边界和一秒安全距离的位置时跳过生成；普通补给每 0.5 秒重试，不会卡死或强行生成在蛇身上。
+### 在 Godot 编辑器中运行
 
-视觉反馈保持与判定分离：接近苹果时只有轻微呼吸缩放，四类苹果不使用外围虚线或环形边框；拾取会触发蛇头弹性反馈，金色加速带有短尾迹，安全擦墙会产生细小摩擦粒子，死亡显示短促冲击圈。这些效果均不改变碰撞半径。
+1. 使用 Godot 4.7.2 打开 `project.godot`。
+2. 按 `F6` 运行当前场景，或按 `F5` 运行项目。
+3. 如需从编辑器导出 Web 版本，先执行 `python3 tools/fetch_web_templates.py`，再选择 **Web** 导出预设。
 
-游戏不播放背景音乐。四类苹果使用不同的上行短音阶，炸弹和死亡保留独立音效；暂停和失焦时冻结音效，Sound off 会立即静音。拾取音效随游戏离线打包，可用 `python3 tools/generate_audio.py` 重新生成，无需下载资源或安装额外依赖。
+## 操作
 
-## 增长设计
+| 操作 | 按键或入口 |
+| --- | --- |
+| 开始 | `Enter` 或 **Let's play** |
+| 左右转向 | `←` / `→` |
+| 暂停或继续 | `Esc`，或 **Pause / Resume** |
+| 重新开始 | `R`，或结束后的 **Play again** |
+| 切换难度 | 菜单中的 **Easy / Medium / Hard** |
+| 开关音效 | 左下角 **Sound on / off** |
+| 碰撞调试层 | `D` |
 
-记分数为 `s`，身体圆半径、圆球边缘的参考间距为：
+蛇会持续向前移动。不同苹果提供分数、加速或苹果雨效果；炸弹按所选难度生成并在倒计时结束后爆炸。撞墙或撞到自身时，正面碰撞会结束游戏，较小角度的擦碰会自动修正为沿边界滑行。
 
-```text
-r(s) = 11 + 6 × (√(1 + s / 10) − 1)
-g(s) = 8 / (1 + s / 35)
-头半径 = 1.24 × r(s)
-```
-
-开局身体两节，前 5 分严格为 `2+s` 节。蛇头中心到蛇尾中心的路径长度：
+## 仓库构成
 
 ```text
-0 ≤ s ≤ 5:
-L(s) = 2.24 × r(s) + g(s) + (s + 1) × (2 × r(s) + g(s))
-
-s > 5:
-L(s) = L(5) + 620 × (√(1 + (s − 5) / 10) − 1)
-
-基础速度 = 156 + 65 × (√(1 + s / 15) − 1) 像素/秒
-转向速度 = 6.5 弧度/秒（约 372°/秒）
+SmoothSnake/
+├── scenes/
+│   └── main.tscn               # 游戏主场景
+├── scripts/
+│   ├── snake_model.gd          # 移动、增长、碰撞、苹果与炸弹等核心模型
+│   └── game.gd                 # 输入、绘制、菜单、音效与本地记录
+├── assets/audio/               # 四类苹果的拾取音效
+├── web/
+│   └── shell.html              # Web 页面外壳、加载进度与错误反馈
+├── tools/
+│   ├── web.py                  # Web 构建与本地服务器入口
+│   ├── fetch_web_templates.py  # 按需下载 Godot Web 导出模板
+│   ├── generate_audio.py       # 程序化生成拾取音效
+│   └── browser_smoke.cjs       # 浏览器端冒烟测试
+├── tests/
+│   └── run.gd                  # 无插件的玩法与菜单回归测试
+├── .github/workflows/
+│   └── pages.yml               # 测试、构建及 GitHub Pages 部署
+├── project.godot               # Godot 项目配置与主场景入口
+├── export_presets.cfg          # 单线程 WebAssembly 导出配置
+├── plan.md                     # 原始玩法与设计需求
+└── LICENSE                     # MIT License
 ```
 
-5 分以后按目标长度选择身体节数，再沿历史轨迹均匀采样圆心。长度、宽度严格递增，后续增长逐渐放缓；参考间距逐渐缩小，让身体更紧密。5→15 分时，长度约翻倍、半径增大约 20%，不会出现吃十个苹果仍看不出变化的情况。
+核心职责分为两层：
 
-模拟使用 120 Hz 固定步长，每次移动进一步拆为不超过 3 像素的小步，避免加速时穿墙或穿过身体。
+- `scripts/snake_model.gd` 保存与界面无关的确定性游戏状态和规则，可由测试直接驱动。
+- `scripts/game.gd` 负责把模型连接到 Godot 场景，包括输入、渲染、菜单、音频和浏览器本地存储。
 
-## GitHub Pages
+以下目录由工具生成且不会提交到 Git：
 
-仓库内已提供 `.github/workflows/pages.yml`：
+| 目录 | 内容 |
+| --- | --- |
+| `.godot/` | Godot 导入缓存与编辑器状态 |
+| `.tools/` | 本地 Godot、Web 模板及浏览器测试依赖 |
+| `build/web/` | 可部署的 Web 构建产物 |
+| `artifacts/` | 浏览器测试截图与结果 |
 
-1. 将本项目推送到 GitHub 仓库的 `main` 或 `master` 分支。
-2. 在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
-3. 推送代码，或在 Actions 中手动运行 **Build and deploy Web game**。
-4. 工作流安装 Godot 4.7.2、运行玩法测试、导出并部署。访问部署任务显示的 Pages 地址。
+## 测试
 
-PR 只测试与构建，并提供可下载的 `smoothsnake-web` 构建产物；不会部署。
-
-网页导出使用 Compatibility / WebGL 2、**单线程 WebAssembly**，无需 COOP/COEP 响应头，兼容 GitHub Pages 的项目子路径。当前没有绑定远端仓库，也没有发布线上站点。
-
-## 验证
-
-无需插件的玩法与菜单回归：
+运行 GDScript 回归测试：
 
 ```bash
 godot --headless --path . --import
 godot --headless --path . --script tests/run.gd
 ```
 
-覆盖增长单调性与减速、连续转向、实际拾取、45° 碰撞边界、墙与自身平行修正、加速防穿透、增益刷新和到期、炸弹生成与爆炸边界、安全生成、暂停/继续/重玩、失焦自动暂停。
+测试覆盖移动与转向、成长曲线、苹果效果、炸弹生成与爆炸、碰撞边界、暂停、重玩及菜单状态。
 
-### 碰撞调试
-
-运行游戏时按 `D` 开关调试层。该模式不会出现在正式 UI 的操作提示中，仅用于开发：
-
-- 始终显示身体圆心连接线、各圆心和实际圆角墙面。
-- 紫色箭头表示蛇头方向，粉色箭头表示本次碰撞采用的分离法向。
-- 碰撞时以红色（致死）或绿色（滑行）高亮实际参与判定的墙壁或身体线段，仅保留线段、接触点和向量，不显示遮挡游戏画面的信息块。
-- 非致死碰撞信息保留 3 秒；致死或暂停后保持显示，便于检查。
-
-可选浏览器验收（先构建并启动本地服务器）：
+可选的浏览器冒烟测试需要 Node.js 和 Playwright。先构建并启动本地服务器，再执行：
 
 ```bash
 npm install --prefix .tools/browser playwright
@@ -125,19 +134,18 @@ PLAYWRIGHT_BROWSERS_PATH="$PWD/.tools/ms-playwright" \
   node tools/browser_smoke.cjs
 ```
 
-也可通过 `CHROME_BIN` 指向已有 Chrome。测试真实加载、开始、吃苹果、暂停画面冻结、撞墙结束、重玩、转向与窗口缩放，截图和结果保存在 `artifacts/`。
+也可以通过 `CHROME_BIN` 使用本机已有的 Chrome。测试结果写入 `artifacts/`。
 
-## 文件结构
+## GitHub Pages
 
-```text
-scenes/main.tscn          主场景
-scripts/snake_model.gd    可独立测试的移动、碰撞、增长与计时逻辑
-scripts/game.gd           输入、绘图、菜单、音效与本地记录
-assets/audio/            原创循环音乐与四类拾取音效
-web/shell.html           网页外壳、加载进度与错误反馈
-tools/                  模板下载、构建、本地服务与浏览器检查
-tests/run.gd            自动回归测试
-export_presets.cfg      单线程 Web 导出配置
-.github/workflows/      测试、构建、Pages 部署
-plan.md                 原始需求
-```
+仓库通过 `.github/workflows/pages.yml` 自动测试、构建和部署：
+
+1. 在仓库 **Settings → Pages → Build and deployment** 中将 **Source** 设为 **GitHub Actions**。
+2. 推送到 `main` 或 `master`，或手动运行 **Build and deploy Web game**。
+3. 从部署任务中打开生成的 Pages 地址。
+
+Pull Request 只运行测试和构建，并上传 `smoothsnake-web` 构建产物，不执行部署。Web 导出使用 Compatibility / WebGL 2 和单线程 WebAssembly，无需配置 COOP/COEP 响应头。
+
+## License
+
+本项目使用 [MIT License](LICENSE)。
