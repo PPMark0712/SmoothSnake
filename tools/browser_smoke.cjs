@@ -89,8 +89,28 @@ const path = require("node:path");
     }));
     assert(!layout.overflow, "Game must fit viewport without horizontal scrolling");
     assert.deepEqual(layout.canvas, { width: 960, height: 600 });
+    await page.setViewportSize({ width: 1727, height: 831 });
+    const wideLayout = await page.evaluate(() => {
+      const canvas = document.querySelector("canvas").getBoundingClientRect();
+      return {
+        canvas: { left: canvas.left, right: canvas.right, width: canvas.width, height: canvas.height },
+        viewport: { width: innerWidth, height: innerHeight },
+      };
+    });
+    assert(
+      Math.abs(wideLayout.canvas.left - (wideLayout.viewport.width - wideLayout.canvas.right)) < 1,
+      "Ultrawide canvas must remain horizontally centered",
+    );
+    assert(
+      Math.abs(wideLayout.canvas.width / wideLayout.canvas.height - 8 / 5) < 0.001,
+      "Ultrawide canvas must preserve the 8:5 game aspect ratio",
+    );
+    await page.screenshot({ path: path.join(output, "10-ultrawide.png") });
     assert.equal(errors.length, 0, errors.join("\n"));
-    fs.writeFileSync(path.join(output, "browser-results.json"), JSON.stringify({ errors, layout, screenshots: 8 }, null, 2));
+    fs.writeFileSync(
+      path.join(output, "browser-results.json"),
+      JSON.stringify({ errors, layout, wideLayout, screenshots: 9 }, null, 2),
+    );
     console.log("Browser smoke passed: gameplay, resize, audible effects, pause and mute; no console errors.");
   } finally {
     await browser.close();
