@@ -60,6 +60,8 @@ var blast_death_left := 0.0
 
 
 func _ready() -> void:
+	if OS.has_feature("web"):
+		Engine.max_fps = 60
 	font = ThemeDB.fallback_font
 	var variation := FontVariation.new()
 	variation.base_font = font
