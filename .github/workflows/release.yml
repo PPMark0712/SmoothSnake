@@ -1,0 +1,63 @@
+name: Build desktop release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Godot 4.7.2
+        run: |
+          mkdir -p .tools
+          curl --fail --location --retry 3 \
+            https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip \
+            --output .tools/godot.zip
+          unzip -q .tools/godot.zip -d .tools
+          mv .tools/Godot_v4.7.2-stable_linux.x86_64 .tools/godot
+          chmod +x .tools/godot
+          touch .tools/_sc_
+
+      - name: Cache desktop templates
+        uses: actions/cache@v4
+        with:
+          path: .tools/templates
+          key: godot-desktop-4.7.2-v1
+
+      - name: Verify gameplay
+        run: |
+          .tools/godot --headless --path . --import
+          .tools/godot --headless --path . --script tests/run.gd
+
+      - name: Build desktop packages
+        run: python3 tools/desktop.py
+
+      - name: Generate checksums
+        run: |
+          cd build/releases
+          sha256sum \
+            SmoothSnake-Windows-x86_64.zip \
+            SmoothSnake-macOS-universal.zip \
+            > SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" \
+              --target "$GITHUB_SHA" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          gh release upload "$GITHUB_REF_NAME" \
+            build/releases/SmoothSnake-Windows-x86_64.zip \
+            build/releases/SmoothSnake-macOS-universal.zip \
+            build/releases/SHA256SUMS \
+            --clobber

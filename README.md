@@ -76,6 +76,14 @@ python3 tools/desktop.py
 
 macOS 包未使用项目开发者证书签名或公证，首次打开时可能需要在系统设置中手动允许。GitHub Pages 工作流仍只调用 `tools/web.py`，不会下载或构建桌面版本。
 
+推送以 `v` 开头的版本标签会触发 `.github/workflows/release.yml`，自动构建桌面包、创建同名 GitHub Release，并上传两个 ZIP 和 `SHA256SUMS`：
+
+```bash
+git push origin main
+git tag v1.0.0
+git push origin v1.0.0
+```
+
 ## 操作
 
 | 操作 | 按键或入口 |
@@ -111,7 +119,8 @@ SmoothSnake/
 ├── tests/
 │   └── run.gd                  # 无插件的玩法与菜单回归测试
 ├── .github/workflows/
-│   └── pages.yml               # 测试、构建及 GitHub Pages 部署
+│   ├── pages.yml               # 测试、构建及 GitHub Pages 部署
+│   └── release.yml             # 标签触发的桌面构建与 Release 发布
 ├── project.godot               # Godot 项目配置与主场景入口
 ├── export_presets.cfg          # Web、Windows 与 macOS 导出配置
 ├── plan.md                     # 原始玩法与设计需求
