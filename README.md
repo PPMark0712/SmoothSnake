@@ -1,6 +1,6 @@
 # SmoothSnake
 
-SmoothSnake 是一个使用 **Godot 4.7.2 + GDScript** 开发的连续平面贪吃蛇游戏，面向桌面浏览器发布。游戏资源由程序绘制或随仓库提供，不依赖外部美术与字体。
+SmoothSnake 是一个使用 **Godot 4.7.2 + GDScript** 开发的连续平面贪吃蛇游戏，支持 Web、Windows 和 macOS。游戏资源由程序绘制或随仓库提供，不依赖外部美术与字体。
 
 ## 在线游玩
 
@@ -48,6 +48,8 @@ GODOT_BIN=/path/to/godot python3 tools/web.py dev
 | `python3 tools/web.py serve` | 启动已有的 Web 构建，不重新导出 |
 | `python3 tools/web.py serve --port 8080` | 使用指定端口启动已有构建 |
 | `python3 tools/fetch_web_templates.py` | 仅下载或检查 Web 导出模板 |
+| `python3 tools/desktop.py` | 构建 Windows 和 macOS Release 压缩包 |
+| `python3 tools/desktop.py templates` | 仅下载或检查桌面导出模板 |
 | `python3 tools/generate_audio.py` | 重新生成四类苹果的拾取音效 |
 
 完成首次模板下载后，后续构建可以离线进行。
@@ -57,6 +59,22 @@ GODOT_BIN=/path/to/godot python3 tools/web.py dev
 1. 使用 Godot 4.7.2 打开 `project.godot`。
 2. 按 `F6` 运行当前场景，或按 `F5` 运行项目。
 3. 如需从编辑器导出 Web 版本，先执行 `python3 tools/fetch_web_templates.py`，再选择 **Web** 导出预设。
+4. 如需导出桌面版本，先执行 `python3 tools/desktop.py templates`，再选择 **Windows** 或 **macOS** 预设。
+
+### 桌面 Release
+
+执行以下命令会下载缺失的官方桌面模板，并同时生成两个发布压缩包：
+
+```bash
+python3 tools/desktop.py
+```
+
+输出文件：
+
+- `build/releases/SmoothSnake-Windows-x86_64.zip`
+- `build/releases/SmoothSnake-macOS-universal.zip`
+
+macOS 包未使用项目开发者证书签名或公证，首次打开时可能需要在系统设置中手动允许。GitHub Pages 工作流仍只调用 `tools/web.py`，不会下载或构建桌面版本。
 
 ## 操作
 
@@ -86,6 +104,7 @@ SmoothSnake/
 │   └── shell.html              # Web 页面外壳、加载进度与错误反馈
 ├── tools/
 │   ├── web.py                  # Web 构建与本地服务器入口
+│   ├── desktop.py              # Windows/macOS 模板、构建与打包入口
 │   ├── fetch_web_templates.py  # 按需下载 Godot Web 导出模板
 │   ├── generate_audio.py       # 程序化生成拾取音效
 │   └── browser_smoke.cjs       # 浏览器端冒烟测试
@@ -94,7 +113,7 @@ SmoothSnake/
 ├── .github/workflows/
 │   └── pages.yml               # 测试、构建及 GitHub Pages 部署
 ├── project.godot               # Godot 项目配置与主场景入口
-├── export_presets.cfg          # 单线程 WebAssembly 导出配置
+├── export_presets.cfg          # Web、Windows 与 macOS 导出配置
 ├── plan.md                     # 原始玩法与设计需求
 └── LICENSE                     # MIT License
 ```
@@ -109,8 +128,9 @@ SmoothSnake/
 | 目录 | 内容 |
 | --- | --- |
 | `.godot/` | Godot 导入缓存与编辑器状态 |
-| `.tools/` | 本地 Godot、Web 模板及浏览器测试依赖 |
+| `.tools/` | 本地 Godot、导出模板及浏览器测试依赖 |
 | `build/web/` | 可部署的 Web 构建产物 |
+| `build/releases/` | Windows 与 macOS Release 压缩包 |
 | `artifacts/` | 浏览器测试截图与结果 |
 
 ## 测试
