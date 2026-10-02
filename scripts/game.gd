@@ -5,6 +5,8 @@ extends Node2D
 enum State { READY, PLAYING, PAUSED, OVER, DYING }
 
 const Model = preload("res://scripts/snake_model.gd")
+const StaticBackdrop = preload("res://scripts/static_backdrop.gd")
+const AppleAtlas = preload("res://scripts/apple_atlas.gd")
 const PICKUP_SOUNDS = [
 	preload("res://assets/audio/pickup_red.wav"),
 	preload("res://assets/audio/pickup_gold.wav"),
@@ -57,6 +59,7 @@ var eat_pulse := 0.0
 var impact_flash := 0.0
 var slide_fx_cooldown := 0.0
 var blast_death_left := 0.0
+var apple_atlas: Texture2D
 
 
 func _ready() -> void:
@@ -77,6 +80,8 @@ func _ready() -> void:
 	model.died.connect(_on_death)
 	model.contact_evaluated.connect(_on_contact_evaluated)
 	build_draw_batches()
+	build_static_backdrop()
+	build_apple_atlas()
 	add_child(audio)
 	add_child(pickup_audio)
 	pickup_audio.volume_db = -9.0
@@ -85,6 +90,43 @@ func _ready() -> void:
 	set_state(State.READY)
 	get_viewport().size_changed.connect(layout_ui)
 	layout_ui()
+
+
+func build_static_backdrop() -> void:
+	var static_viewport := SubViewport.new()
+	static_viewport.name = "StaticBackdropViewport"
+	static_viewport.size = Vector2i(1440, 900)
+	static_viewport.disable_3d = true
+	static_viewport.gui_disable_input = true
+	static_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(static_viewport)
+
+	var backdrop := StaticBackdrop.new()
+	static_viewport.add_child(backdrop)
+	backdrop.configure(font, bold, board_dot_segments)
+
+	var sprite := Sprite2D.new()
+	sprite.name = "StaticBackdrop"
+	sprite.centered = false
+	sprite.texture = static_viewport.get_texture()
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	sprite.z_index = -100
+	add_child(sprite)
+	static_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+
+func build_apple_atlas() -> void:
+	var atlas_viewport := SubViewport.new()
+	atlas_viewport.name = "AppleAtlasViewport"
+	atlas_viewport.size = Vector2i(AppleAtlas.CELL_SIZE * APPLE_COLORS.size(), AppleAtlas.CELL_SIZE)
+	atlas_viewport.transparent_bg = true
+	atlas_viewport.disable_3d = true
+	atlas_viewport.gui_disable_input = true
+	atlas_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(atlas_viewport)
+	atlas_viewport.add_child(AppleAtlas.new())
+	apple_atlas = atlas_viewport.get_texture()
+	atlas_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 
 
 func build_draw_batches() -> void:
@@ -308,22 +350,7 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	if font == null:
 		return
-	draw_rect(Rect2(0, 0, 1440, 900), PAPER)
-	draw_brand()
 	draw_hud()
-	rounded_box(
-		Rect2(Model.ARENA.position + Vector2(0, 4), Model.ARENA.size),
-		Color(0.33, 0.36, 0.20, 0.09),
-		Model.ARENA_CORNER_RADIUS,
-	)
-	rounded_box(
-		Model.ARENA,
-		Color("#fdfbed"),
-		Model.ARENA_CORNER_RADIUS,
-		Color("#d5d6b7"),
-		3,
-	)
-	draw_multiline(board_dot_segments, Color(0.57, 0.60, 0.42, 0.14), 1.6, true)
 	for apple in model.apples:
 		var p: Vector2 = apple["position"]
 		var bob := sin(visual_time * 2.6 + p.x) * 2.0
@@ -382,20 +409,10 @@ func _draw() -> void:
 			3.0,
 			true,
 		)
-	draw_footer()
 	if menu.visible:
 		draw_menu()
 	if debug_mode:
 		draw_debug_overlay()
-
-
-func draw_brand() -> void:
-	for i in range(3):
-		ball(Vector2(64 + i * 13, 62 + sin(float(i)) * 7), 9.0, Color("#9fb86d"))
-	ball(Vector2(98, 60), 12, Color("#aac477"))
-	draw_circle(Vector2(101, 57), 2, INK)
-	text_at("SmoothSnake", Vector2(126, 70), 30, INK, bold)
-	text_at("SMALL TURNS. BIG ADVENTURES.", Vector2(49, 108), 11, MUTED)
 
 
 func draw_hud() -> void:
@@ -409,11 +426,7 @@ func draw_hud() -> void:
 			Model.RAINBOW_DURATION,
 			Color("#9b7cbd"),
 		)
-	rounded_box(Rect2(1016, 35, 104, 76), Color("#efecd7"), 16)
-	rounded_box(Rect2(1132, 35, 108, 76), Color("#e3eacb"), 16)
-	text_at("BEST", Vector2(1034, 58), 11, MUTED, bold)
 	text_at(str(best).pad_zeros(2), Vector2(1034, 91), 29, INK, bold)
-	text_at("SCORE", Vector2(1150, 58), 11, GREEN, bold)
 	text_at(str(model.score).pad_zeros(2), Vector2(1150, 91), 29, INK, bold)
 
 
@@ -545,85 +558,14 @@ func ball(position: Vector2, r: float, color: Color) -> void:
 
 
 func draw_apple(position: Vector2, kind: int, scale_value: float = 1.0) -> void:
-	var color: Color = APPLE_COLORS[kind]
-	var outline := PackedVector2Array(
-		[
-			Vector2(-3, -10),
-			Vector2(-9, -12),
-			Vector2(-13, -8),
-			Vector2(-15, -2),
-			Vector2(-13, 7),
-			Vector2(-8, 13),
-			Vector2(-2, 14),
-			Vector2(1, 12),
-			Vector2(7, 14),
-			Vector2(12, 9),
-			Vector2(15, 1),
-			Vector2(13, -7),
-			Vector2(8, -11),
-			Vector2(2, -10)
-		]
+	if apple_atlas == null:
+		return
+	var display_size := Vector2.ONE * AppleAtlas.DISPLAY_SIZE * scale_value
+	draw_texture_rect_region(
+		apple_atlas,
+		Rect2(position - display_size * 0.5, display_size),
+		Rect2(kind * AppleAtlas.CELL_SIZE, 0, AppleAtlas.CELL_SIZE, AppleAtlas.CELL_SIZE),
 	)
-	draw_set_transform(position, 0.0, Vector2.ONE * scale_value)
-	ellipse(Vector2(0, 17), Vector2(13, 3), Color(0.40, 0.38, 0.22, 0.13))
-	draw_colored_polygon(outline, color.darkened(0.15))
-	draw_colored_polygon(
-		PackedVector2Array(
-			[
-				Vector2(-11, -7),
-				Vector2(-5, -10),
-				Vector2(1, -7),
-				Vector2(8, -9),
-				Vector2(12, -4),
-				Vector2(11, 5),
-				Vector2(6, 11),
-				Vector2(0, 9),
-				Vector2(-7, 10),
-				Vector2(-12, 3)
-			]
-		),
-		color
-	)
-	if kind == Model.Apple.RAINBOW:
-		draw_colored_polygon(
-			PackedVector2Array(
-				[Vector2(-11, -8), Vector2(10, -8), Vector2(12, -5), Vector2(-12, -5)]
-			),
-			Color("#df6e73")
-		)
-		draw_colored_polygon(
-			PackedVector2Array(
-				[Vector2(-12, -4), Vector2(12, -4), Vector2(12, -1), Vector2(-12, -1)]
-			),
-			Color("#efa34f")
-		)
-		draw_colored_polygon(
-			PackedVector2Array([Vector2(-12, 0), Vector2(12, 0), Vector2(11, 3), Vector2(-11, 3)]),
-			Color("#e8cf55")
-		)
-		draw_colored_polygon(
-			PackedVector2Array([Vector2(-11, 4), Vector2(11, 4), Vector2(9, 7), Vector2(-10, 7)]),
-			Color("#78b979")
-		)
-		draw_colored_polygon(
-			PackedVector2Array(
-				[
-					Vector2(-9, 8),
-					Vector2(8, 8),
-					Vector2(6, 11),
-					Vector2(0, 9),
-					Vector2(-7, 10),
-				]
-			),
-			Color("#65a9c4")
-		)
-	draw_rect(Rect2(-9, -6, 4, 6), Color(1, 1, 0.91, 0.70))
-	draw_rect(Rect2(-1, -17, 3, 8), Color("#7b6443"))
-	draw_colored_polygon(
-		PackedVector2Array([Vector2(1, -15), Vector2(5, -20), Vector2(12, -20), Vector2(9, -15)]),
-		Color("#7b9a54")
-	)
-	draw_set_transform(Vector2.ZERO)
 
 
 func draw_bomb(bomb: Dictionary) -> void:
@@ -652,26 +594,6 @@ func draw_bomb(bomb: Dictionary) -> void:
 	draw_arc(
 		p, 27, -PI / 2, -PI / 2 + TAU * remaining / Model.BOMB_FUSE, 48, Color("#cb815a"), 2.5, true
 	)
-
-
-func draw_footer() -> void:
-	draw_apple(Vector2(66, 817), Model.Apple.RED, 0.65)
-	text_at("+1", Vector2(86, 824), 15, INK, bold)
-	draw_apple(Vector2(140, 817), Model.Apple.GREEN, 0.65)
-	text_at("+2", Vector2(160, 824), 15, INK, bold)
-	draw_apple(Vector2(220, 817), Model.Apple.GOLD, 0.65)
-	text_at("+5  ·  1.5× speed / 10s", Vector2(240, 824), 14, INK)
-	draw_apple(Vector2(435, 817), Model.Apple.RAINBOW, 0.65)
-	text_at("+10  ·  10 apples / 10s", Vector2(455, 824), 14, INK)
-	draw_circle(Vector2(670, 817), 8, Color("#505d53"))
-	text_at("5s fuse · keep clear", Vector2(689, 824), 14, MUTED)
-	keycap(Rect2(1045, 802, 32, 29), "←")
-	keycap(Rect2(1084, 802, 32, 29), "→")
-	text_at("steer", Vector2(1127, 823), 15, INK)
-	keycap(Rect2(1212, 802, 47, 29), "esc")
-	text_at("pause", Vector2(1270, 823), 15, INK)
-	text_at("Wide glances slide. Sharp hits end the run.", Vector2(181, 871), 12, MUTED)
-	right_text("MADE FOR A LITTLE BREAK", Vector2(1391, 871), 11, MUTED)
 
 
 func draw_menu() -> void:
@@ -719,25 +641,6 @@ func draw_menu() -> void:
 		center_text(str(model.score), Vector2(720, 446), 40, GREEN, bold)
 		center_text("POINTS", Vector2(720, 469), 11, MUTED, bold)
 		center_text("Press R to try again", Vector2(720, 615), 13, MUTED)
-
-
-func keycap(rect: Rect2, label: String) -> void:
-	rounded_box(rect, Color("#eeeacf"), 6, Color("#dbdcc0"), 1)
-	if label in ["←", "→"]:
-		var direction := -1.0 if label == "←" else 1.0
-		var center := rect.get_center()
-		var tip := center + Vector2(6 * direction, 0)
-		draw_line(center - Vector2(6 * direction, 0), tip, INK, 1.5, true)
-		draw_polyline(
-			PackedVector2Array(
-				[tip + Vector2(-4 * direction, -4), tip, tip + Vector2(-4 * direction, 4)]
-			),
-			INK,
-			1.5,
-			true
-		)
-	else:
-		center_text(label, Vector2(rect.get_center().x, rect.position.y + 20), 15, INK)
 
 
 func rounded_box(
@@ -789,18 +692,6 @@ func center_text(
 		size_value,
 		color,
 		f
-	)
-
-
-func right_text(value: String, position: Vector2, size_value: int, color: Color) -> void:
-	text_at(
-		value,
-		(
-			position
-			- Vector2(font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, size_value).x, 0)
-		),
-		size_value,
-		color
 	)
 
 

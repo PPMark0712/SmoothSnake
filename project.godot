@@ -23,7 +23,7 @@ textures/default_filters/use_nearest_mipmap_filter=false
 environment/defaults/default_clear_color=Color(0.973, 0.957, 0.875, 1)
 
 [physics]
-common/physics_ticks_per_second=120
+common/physics_ticks_per_second=60
 
 [audio]
 driver/enable_input=false
