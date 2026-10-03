@@ -29,6 +29,62 @@ const DEBUG_SAFE := Color("#3fa66b")
 const DEBUG_LETHAL := Color("#dc4c45")
 const BLAST_ANIMATION_DURATION := 0.85
 const BLAST_DEATH_DELAY := 0.85
+const SKINS := [
+	{
+		"name": "Forest",
+		"body": Color("#77a64f"),
+		"tail": Color("#b7cf67"),
+		"head": Color("#659443"),
+		"accent": Color("#294f35"),
+		"cheek": Color("#ef9d7d"),
+		"pattern": 0,
+	},
+	{
+		"name": "Coral",
+		"body": Color("#d9574f"),
+		"tail": Color("#f28a64"),
+		"head": Color("#c94345"),
+		"accent": Color("#7d2638"),
+		"cheek": Color("#ffd0a8"),
+		"pattern": 1,
+	},
+	{
+		"name": "Ocean",
+		"body": Color("#238da3"),
+		"tail": Color("#55c2b2"),
+		"head": Color("#176d8a"),
+		"accent": Color("#123f68"),
+		"cheek": Color("#f2a58f"),
+		"pattern": 2,
+	},
+	{
+		"name": "Midnight",
+		"body": Color("#414657"),
+		"tail": Color("#687186"),
+		"head": Color("#292f42"),
+		"accent": Color("#8be0c5"),
+		"cheek": Color("#e99ca5"),
+		"pattern": 3,
+	},
+	{
+		"name": "Honey",
+		"body": Color("#d99b23"),
+		"tail": Color("#f2c94c"),
+		"head": Color("#b87318"),
+		"accent": Color("#68431f"),
+		"cheek": Color("#f28e72"),
+		"pattern": 4,
+	},
+	{
+		"name": "Berry",
+		"body": Color("#9f4d91"),
+		"tail": Color("#d06ca0"),
+		"head": Color("#763d7d"),
+		"accent": Color("#4b285f"),
+		"cheek": Color("#f3a09a"),
+		"pattern": 5,
+	},
+]
 
 var model := Model.new()
 var state := State.READY
@@ -44,6 +100,8 @@ var death_reason := ""
 var menu := Control.new()
 var primary := Button.new()
 var difficulty_buttons: Array[Button] = []
+var skin_buttons: Array[Button] = []
+var skin_index := 0
 var pause_button := Button.new()
 var sound_button := Button.new()
 var sound_enabled := true
@@ -75,6 +133,7 @@ func _ready() -> void:
 		best = int(save.get_value("game", "best", 0))
 		sound_enabled = bool(save.get_value("game", "sound", true))
 		model.set_difficulty(int(save.get_value("game", "difficulty", Model.Difficulty.MEDIUM)))
+		skin_index = clampi(int(save.get_value("game", "skin", 0)), 0, SKINS.size() - 1)
 	model.apple_eaten.connect(_on_apple)
 	model.exploded.connect(_on_explosion)
 	model.died.connect(_on_death)
@@ -165,6 +224,13 @@ func build_ui() -> void:
 		menu.add_child(button)
 		difficulty_buttons.append(button)
 	update_difficulty_buttons()
+	for index in range(SKINS.size()):
+		var button := Button.new()
+		button.tooltip_text = SKINS[index]["name"]
+		button.pressed.connect(set_skin.bind(index))
+		menu.add_child(button)
+		skin_buttons.append(button)
+	update_skin_buttons()
 	pause_button.text = "II   Pause"
 	pause_button.pressed.connect(toggle_pause)
 	sound_button.pressed.connect(
@@ -200,12 +266,15 @@ func style_button(button: Button, filled: bool) -> void:
 
 func layout_ui() -> void:
 	# The viewport stretches the complete 1440 × 900 canvas with its controls.
-	primary.position = Vector2(520, 526)
 	primary.size = Vector2(400, 52)
 	for i in range(difficulty_buttons.size()):
-		difficulty_buttons[i].position = Vector2(568 + i * 104, 478)
+		difficulty_buttons[i].position = Vector2(568 + i * 104, 486)
 		difficulty_buttons[i].size = Vector2(96, 36)
 		difficulty_buttons[i].add_theme_font_size_override("font_size", 14)
+	for i in range(skin_buttons.size()):
+		skin_buttons[i].position = Vector2(574 + i * 50, 536)
+		skin_buttons[i].size = Vector2(42, 34)
+	primary.position = Vector2(520, 580)
 	pause_button.position = Vector2(1260, 47)
 	pause_button.size = Vector2(132, 48)
 	sound_button.position = Vector2(48, 851)
@@ -242,6 +311,28 @@ func start_difficulty(difficulty: int) -> void:
 func update_difficulty_buttons() -> void:
 	for i in range(difficulty_buttons.size()):
 		style_button(difficulty_buttons[i], i == model.difficulty)
+
+
+func set_skin(index: int) -> void:
+	skin_index = clampi(index, 0, SKINS.size() - 1)
+	update_skin_buttons()
+	save_settings()
+	queue_redraw()
+
+
+func update_skin_buttons() -> void:
+	for i in range(skin_buttons.size()):
+		var button := skin_buttons[i]
+		var skin: Dictionary = SKINS[i]
+		button.add_theme_color_override("font_color", Color.TRANSPARENT)
+		for button_state in ["normal", "hover", "pressed", "focus"]:
+			var style := StyleBoxFlat.new()
+			style.bg_color = skin["body"].lightened(0.10 if button_state == "hover" else 0.0)
+			style.set_corner_radius_all(8)
+			style.set_border_width_all(3 if i == skin_index else 1)
+			style.border_color = INK if i == skin_index else Color("#fffdf0")
+			button.add_theme_stylebox_override(button_state, style)
+		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 
 
 func sync_web_status() -> void:
@@ -442,6 +533,7 @@ func status_pill(
 
 func draw_snake() -> void:
 	var forward := Vector2.from_angle(model.heading)
+	var skin: Dictionary = SKINS[skin_index]
 	if model.gold_left > 0:
 		for i in range(3, 0, -1):
 			var wake_position := model.head - forward * (16.0 + i * 12.0)
@@ -452,21 +544,16 @@ func draw_snake() -> void:
 			)
 	for i in range(model.body.size() - 1, -1, -1):
 		var t := float(i) / maxf(1.0, model.body.size() - 1.0)
-		var body_color := Color("#a9c775").lerp(Color("#cfdb94"), t * 0.65)
+		var body_color: Color = skin["body"].lerp(skin["tail"], t * 0.72)
 		ball(model.body[i], model.radius(), body_color)
-		if i % 2 == 1:
-			draw_circle(
-				model.body[i] + Vector2(-model.radius() * 0.22, -model.radius() * 0.24),
-				maxf(1.0, model.radius() * 0.10),
-				Color(0.36, 0.48, 0.23, 0.22),
-			)
+		draw_body_pattern(i, skin)
 	if model.gold_left > 0:
 		draw_arc(model.head, model.head_radius() + 6, 0, TAU, 48, Color("#dec270"), 2, true)
 	var pulse_phase := 1.0 - eat_pulse / 0.28
 	var visual_head_radius := model.head_radius()
 	if eat_pulse > 0.0:
 		visual_head_radius *= 1.0 + sin(pulse_phase * PI) * 0.09
-	ball(model.head, visual_head_radius, Color("#a7c774"))
+	ball(model.head, visual_head_radius, skin["head"])
 	var side := forward.orthogonal()
 	for sign_value in [-1.0, 1.0]:
 		var eye: Vector2 = (
@@ -483,7 +570,62 @@ func draw_snake() -> void:
 			draw_circle(eye + forward * 1.1, visual_head_radius * 0.12, INK)
 			draw_circle(eye + forward * 1.1 + Vector2(-0.5, -0.7), 0.65, Color.WHITE)
 		var cheek: Vector2 = model.head + side * sign_value * visual_head_radius * 0.70
-		draw_circle(cheek, visual_head_radius * 0.14, Color("#dfac83"))
+		draw_circle(cheek, visual_head_radius * 0.14, skin["cheek"])
+
+
+func draw_body_pattern(index: int, skin: Dictionary) -> void:
+	var position: Vector2 = model.body[index]
+	var r := model.radius()
+	var accent: Color = skin["accent"]
+	accent.a = 0.62
+	var pattern: int = skin["pattern"]
+	if pattern == 0:
+		if index % 2 == 1:
+			draw_circle(position - Vector2(r * 0.22, r * 0.24), maxf(1.2, r * 0.11), accent)
+	elif pattern == 1:
+		draw_arc(position, r * 0.56, 0, TAU, 24, accent, maxf(1.3, r * 0.12), true)
+	elif pattern == 2:
+		if index % 2 == 0:
+			var normal := body_axis(index).orthogonal()
+			draw_line(
+				position - normal * r * 0.70,
+				position + normal * r * 0.70,
+				accent,
+				maxf(2.0, r * 0.22),
+				true,
+			)
+	elif pattern == 3:
+		draw_circle(position + Vector2(-r * 0.28, -r * 0.16), maxf(1.1, r * 0.10), accent)
+		if index % 2 == 0:
+			draw_circle(position + Vector2(r * 0.22, r * 0.27), maxf(0.9, r * 0.07), accent)
+	elif pattern == 4:
+		if index % 2 == 1:
+			var normal := body_axis(index).orthogonal()
+			draw_line(
+				position - normal * r * 0.78,
+				position + normal * r * 0.78,
+				accent,
+				maxf(3.0, r * 0.34),
+				true,
+			)
+	elif pattern == 5:
+		draw_arc(
+			position + Vector2(0, r * 0.18),
+			r * 0.43,
+			PI,
+			TAU,
+			12,
+			accent,
+			maxf(1.3, r * 0.11),
+			true,
+		)
+
+
+func body_axis(index: int) -> Vector2:
+	var before := model.head if index == 0 else model.body[index - 1]
+	var after := model.body[index + 1] if index + 1 < model.body.size() else model.body[index]
+	var axis: Vector2 = before - after
+	return axis.normalized() if axis.length_squared() > 0.0001 else Vector2.from_angle(model.heading)
 
 
 func draw_debug_overlay() -> void:
@@ -602,7 +744,7 @@ func draw_menu() -> void:
 		Color(0.973, 0.957, 0.875, 0.66),
 		Model.ARENA_CORNER_RADIUS - 2,
 	)
-	var card := Rect2(470, 263, 500, 396)
+	var card := Rect2(470, 253, 500, 430)
 	rounded_box(Rect2(card.position + Vector2(0, 10), card.size), Color(0.30, 0.35, 0.22, 0.08), 26)
 	rounded_box(card, Color("#fffdf0"), 26, Color("#dfdfc4"), 1)
 	if state == State.READY:
@@ -613,7 +755,7 @@ func draw_menu() -> void:
 		center_text("Ready to roll?", Vector2(720, 382), 38, INK, bold)
 		center_text("Follow your appetite.", Vector2(720, 425), 18, MUTED)
 		center_text("Left / Right to turn. Leave room to grow.", Vector2(720, 456), 17, INK)
-		center_text("Press Enter to start", Vector2(720, 615), 13, MUTED)
+		center_text("Press Enter to start", Vector2(720, 657), 13, MUTED)
 	elif state == State.PAUSED:
 		center_text("TAKE YOUR TIME", Vector2(720, 317), 12, GREEN, bold)
 		center_text("A little breather.", Vector2(720, 382), 36, INK, bold)
@@ -640,7 +782,7 @@ func draw_menu() -> void:
 		center_text(death_reason, Vector2(720, 402), 16, MUTED)
 		center_text(str(model.score), Vector2(720, 446), 40, GREEN, bold)
 		center_text("POINTS", Vector2(720, 469), 11, MUTED, bold)
-		center_text("Press R to try again", Vector2(720, 615), 13, MUTED)
+		center_text("Press R to try again", Vector2(720, 657), 13, MUTED)
 
 
 func rounded_box(
@@ -796,6 +938,7 @@ func save_settings() -> void:
 	save.set_value("game", "best", best)
 	save.set_value("game", "sound", sound_enabled)
 	save.set_value("game", "difficulty", model.difficulty)
+	save.set_value("game", "skin", skin_index)
 	var error := save.save("user://smoothsnake.cfg")
 	if error != OK:
 		push_warning("Could not save local preferences: %s" % error_string(error))

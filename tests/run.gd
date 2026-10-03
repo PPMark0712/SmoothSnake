@@ -62,6 +62,47 @@ func test_growth() -> void:
 	check(Model.radius_at(15) / Model.radius_at(5) > 1.15, "Ten points noticeably increase width")
 	check(Model.length_at(15) / Model.length_at(5) > 1.6, "Ten points noticeably increase length")
 
+	model = fresh()
+	no_food(model)
+	var old_count := model.body.size()
+	var old_tail := model.body[-1]
+	var old_radius := model.radius()
+	model.award_apple(Model.Apple.RAINBOW, model.head)
+	check(model.radius() > old_radius, "Width increases immediately when points are awarded")
+	check(model.body.size() > old_count, "A large award adds multiple body balls")
+	for i in range(old_count, model.body.size()):
+		check(
+			model.body[i].distance_to(old_tail) < 0.001,
+			"Every new body ball starts at the current tail",
+		)
+	var first_new := old_count
+	for tick in range(240):
+		model.bombs.clear()
+		model.step(1.0 / 120.0, 0)
+		if model.body_distances[first_new + 1] - model.body_distances[first_new] > 0.1:
+			break
+	check(model.alive, "Stacked growth does not cause a false self collision")
+	check(
+		model.body_distances[first_new + 1] - model.body_distances[first_new] > 0.1,
+		"The first new ball is released before the second",
+	)
+	check(
+		is_equal_approx(
+			model.body_distances[first_new + 2],
+			model.body_distances[first_new + 1],
+		),
+		"Later new balls remain stacked while the first gap opens",
+	)
+	for tick in range(240):
+		model.bombs.clear()
+		model.step(1.0 / 120.0, 0)
+		if model.body_distances[first_new + 2] - model.body_distances[first_new + 1] > 0.1:
+			break
+	check(
+		model.body_distances[first_new + 2] - model.body_distances[first_new + 1] > 0.1,
+		"The second new ball releases after the first",
+	)
+
 
 func test_steering_and_collection() -> void:
 	var model := fresh()
@@ -484,6 +525,9 @@ func test_menu() -> void:
 	game.sound_enabled = false
 	check(game.state == game.State.READY, "Game starts on ready screen")
 	check(game.difficulty_buttons.size() == 3, "Menu shows three direct difficulty buttons")
+	check(game.skin_buttons.size() == 6, "Menu exposes all six snake skins")
+	game.skin_buttons[5].pressed.emit()
+	check(game.skin_index == 5, "Skin swatches update the active snake skin")
 	game.difficulty_buttons[Model.Difficulty.HARD].pressed.emit()
 	check(
 		game.model.difficulty == Model.Difficulty.HARD and game.state == game.State.PLAYING,

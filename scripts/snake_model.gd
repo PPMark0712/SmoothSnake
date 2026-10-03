@@ -42,6 +42,7 @@ var difficulty := Difficulty.MEDIUM
 var apples: Array[Dictionary] = []
 var bombs: Array[Dictionary] = []
 var body: Array[Vector2] = []
+var body_distances: Array[float] = []
 var trail: Array[Vector2] = []
 
 
@@ -62,10 +63,11 @@ func reset(seed_value: int = -1) -> void:
 	food_tick = 0.0
 	apples.clear()
 	bombs.clear()
+	body_distances.clear()
 	trail.clear()
 	for i in range(1001):
 		trail.append(head - Vector2.from_angle(heading) * float(i) * 3.0)
-	rebuild_body()
+	rebuild_body(0.0, true)
 	# The first apple is within reach; the rest use the same empty-space checks.
 	apples.append({"position": Vector2(835, 434), "kind": Apple.RED})
 	for i in range(BASE_APPLES - 1):
@@ -157,8 +159,8 @@ func step(delta: float, steering: float) -> void:
 		resolve_bombs()
 		if not alive:
 			return
-		record_trail()
-		rebuild_body()
+		var advance := record_trail()
+		rebuild_body(advance)
 		collect_apples()
 	food_tick += delta
 	if food_tick >= 0.5:
@@ -211,6 +213,11 @@ func resolve_walls(direction: Vector2) -> void:
 func resolve_body(direction: Vector2) -> void:
 	# Ignore the neck, which is attached to the head, but test all later balls.
 	for i in range(2, body.size()):
+		if (
+			body_distances.size() == body.size()
+			and body_distances[i] - body_distances[i - 1] < radius() * 0.5
+		):
+			continue
 		var contact_radius := head_radius() + radius()
 		if head.distance_squared_to(body[i]) > contact_radius * contact_radius:
 			continue
@@ -367,8 +374,11 @@ func report_contact(
 	)
 
 
-func record_trail() -> void:
+func record_trail() -> float:
+	var advance := 0.0
 	if trail.is_empty() or head.distance_squared_to(trail[0]) >= 1.0:
+		if not trail.is_empty():
+			advance = head.distance_to(trail[0])
 		trail.push_front(head)
 	var kept := 0.0
 	for i in range(1, trail.size()):
@@ -376,24 +386,51 @@ func record_trail() -> void:
 		if kept > length_at(score) + 600.0:
 			trail.resize(i + 1)
 			break
+	return advance
 
 
-func rebuild_body() -> void:
-	body.clear()
-	var first := head_radius() + radius() + gap_at(score)
-	var total := length_at(score)
-	var count := (
-		2 + score
-		if score <= 5
-		else maxi(7, ceili((total - first) / (2.0 * radius() + gap_at(score))) + 1)
+static func body_count_at(points: int) -> int:
+	var body_radius := radius_at(points)
+	var first := body_radius * 1.24 + body_radius + gap_at(points)
+	var total := length_at(points)
+	return (
+		2 + points
+		if points <= 5
+		else maxi(7, ceili((total - first) / (2.0 * body_radius + gap_at(points))) + 1)
 	)
-	var spacing := (total - first) / float(count - 1)
+
+
+func target_body_distance(index: int, count: int = -1) -> float:
+	var resolved_count := body_count_at(score) if count < 0 else count
+	var first := head_radius() + radius() + gap_at(score)
+	var spacing := (length_at(score) - first) / float(maxi(1, resolved_count - 1))
+	return first + index * spacing
+
+
+func rebuild_body(advance: float = 0.0, reset_distances: bool = false) -> void:
+	var count := body_count_at(score)
+	if reset_distances or body_distances.is_empty():
+		body_distances.clear()
+		for i in range(count):
+			body_distances.append(target_body_distance(i, count))
+	else:
+		if body_distances.size() > count:
+			body_distances.resize(count)
+		var tail_distance := body_distances[-1]
+		while body_distances.size() < count:
+			body_distances.append(tail_distance)
+		for i in range(body_distances.size()):
+			var target := target_body_distance(i, count)
+			if body_distances[i] < target:
+				body_distances[i] = minf(target, body_distances[i] + advance)
+
+	body.clear()
 	var path: Array[Vector2] = [head]
 	path.append_array(trail)
 	var segment := 0
 	var walked := 0.0
 	for i in range(count):
-		var target := first + i * spacing
+		var target := body_distances[i]
 		while (
 			segment < path.size() - 2
 			and walked + path[segment].distance_to(path[segment + 1]) < target
