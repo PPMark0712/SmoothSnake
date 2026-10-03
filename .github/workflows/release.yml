@@ -51,11 +51,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
-            gh release create "$GITHUB_REF_NAME" \
-              --target "$GITHUB_SHA" \
-              --title "$GITHUB_REF_NAME" \
-              --generate-notes
+          gh release delete "$GITHUB_REF_NAME" --yes >/dev/null 2>&1 || true
+          gh release create "$GITHUB_REF_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
           gh release upload "$GITHUB_REF_NAME" \
             build/releases/SmoothSnake-Windows-x86_64.zip \
             build/releases/SmoothSnake-macOS-universal.zip \
